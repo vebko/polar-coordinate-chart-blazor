@@ -1,0 +1,4544 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>BlazorVectorViewChart</title>
+    <base href="/" />
+    <link href="css/bootstrap/bootstrap.min.css" rel="stylesheet" />
+    <link href="css/app.css" rel="stylesheet" />
+    <link href="css/library.css" rel="stylesheet" />
+</head>
+
+<body>
+    <app>Loading...</app>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+
+    <script>
+
+        /**
+        * A node class contains data and a recursive next point.
+        */
+        class Node {
+            /**
+            Constructs a new node with the provided data and sets next to be null.
+            */
+            constructor(data) {
+                this.data = data;
+                this.next = null;
+            }
+            /**
+            * Returns the string representation of the data.
+            */
+            toString() {
+                return this.data.toString();
+            }
+        }
+        /**
+        * A dynamic, singlely linked list.
+        */
+        class LinkedList {
+            /**
+            Consstructs an empty linked list.
+            */
+            constructor() {
+                this.head = null;
+            }
+            /**
+            Inserts a node at the beginning of the list
+            */
+            insert(element) {
+                if (this.head == null) {
+                    this.head = new Node(element);
+                }
+                else {
+                    let temp = this.head;
+                    this.head = new Node(element);
+                    this.head.next = temp;
+                }
+            }
+            /**
+            Returns the first element in the list, or null if the list is empty.
+            */
+            first() {
+                if (this.head != null) {
+                    return this.head.data;
+                }
+                else {
+                    return null;
+                }
+            }
+            /**
+            Removes the first element in the list. Returns true if element was successfully removed, false otherwise.
+            */
+            remove() {
+                if (this.head != null) {
+                    this.head = this.head.next;
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            }
+            /**
+            * Prints out the string reprsentation of this linked list.
+            */
+            toString() {
+                let current = this.head;
+                let str = '';
+                while (current != null) {
+                    str += current.toString() + ' ';
+                    current = current.next;
+                }
+                return str.substr(0, str.length - 1);
+            }
+            /**
+            Returns an iterator over the elements in the list
+            */
+            [Symbol.iterator]() {
+                let current = this.head;
+                const iterator = {
+                    next() {
+                        if (current == null) {
+                            return {
+                                done: true,
+                                value: undefined
+                            };
+                        }
+                        else {
+                            let data = current.data;
+                            current = current.next;
+                            return {
+                                done: false,
+                                value: data
+                            };
+                        }
+                    }
+                };
+                return iterator;
+            }
+        }
+
+        /**
+        A dependency graph models relationships between nodes. The graph is directed and asyclic, throwing a circular dependency exception if circular dependencies are added.
+        */
+        class DependencyGraph {
+            /**
+            Constructs an empty dependency graph.
+            */
+            constructor() {
+                this.relationships = new Map();
+                this._size = 0;
+            }
+            /***
+            Adds a node into the dependency graph. If the node already exists within the graph, does nothing.
+            */
+            add(node) {
+                if (!this.contains(node)) {
+                    this.relationships.set(node, new Set());
+                    this._size++;
+                }
+            }
+            /**
+            Returns true if the node exists within the dependency graph.
+            */
+            contains(node) {
+                return this.relationships.has(node);
+            }
+            /**
+            Removes the node from the dependency graph. If the node does not exist does nothing.
+            */
+            remove(node) {
+                if (this.relationships.delete(node)) {
+                    this._size--;
+                }
+            }
+            /**
+            Returns the number of vertices in the dependency graph.
+            */
+            size() {
+                return this._size;
+            }
+            /**
+            Adds a dependency between two nodes. If either of the nodes do not exist within the dependency graph, throws an exception.
+            */
+            addDependency(from, to) {
+                // Make sure the nodes exist
+                this.add(from);
+                this.add(to);
+                // Add the dependency
+                this.relationships.get(from).add(to);
+                // Check for circular dependencies
+                this.traverse(from, from);
+            }
+            /**
+            Traverses the graph structuring checking for circular dependecies. If a circular dependency is added, throws an error.
+            */
+            traverse(current, node, visited = new Set()) {
+                // Mark this node as visited
+                visited.add(current);
+                // Recursively call this method on dependents of the argument node
+                let dependents = this.getDependents(current, true);
+                for (let d of dependents) {
+                    // Check if this dependency causes a circular dependency
+                    if (d == node) {
+                        throw new Error("circular dependency");
+                    }
+                    // Continue traversing un-explored nodes
+                    if (!visited.has(d)) {
+                        this.traverse(d, node, visited);
+                    }
+                }
+            }
+            /**
+            Returns true if a node has dependents.
+            */
+            hasDependents(node) {
+                return this.contains(node) && this.relationships.get(node).size != 0;
+            }
+            /**
+            * Returns the adjacent dependent nodes.
+            */
+            getAdjacentNodes(node) {
+                return this.relationships.get(node);
+            }
+            /**
+            * Returns an iterator to the dependents of the node.
+            */
+            getDependents(node, shallow = false) {
+                // If the node does not exist return an empty iterable
+                if (!this.relationships.has(node)) {
+                    return [];
+                }
+                // If shallow, return adjacent dependencies.
+                if (shallow) {
+                    return this.relationships.get(node).keys();
+                }
+                else {
+                    // Get the dependents including the original node.
+                    let list = this.getTopologicalDependents(node);
+                    // Remove the starting node and return the dependents.
+                    list.remove();
+                    return list;
+                }
+            }
+            /**
+            * Returns a topological sort of this dependency
+            */
+            getTopologicalSort() {
+                let list = new LinkedList();
+                let visited = new Set();
+                for (let node of this.getNodes()) {
+                    if (!visited.has(node)) {
+                        this.getTopologicalDependents(node, visited, list);
+                    }
+                }
+                return list;
+            }
+            /**
+            Returns a list of the arguent node and all of its dependents in topological order.
+            */
+            getTopologicalDependents(node, visited = new Set(), list = new LinkedList()) {
+                // Mark this node as visited
+                visited.add(node);
+                // Recursively call this method on dependents of the argument node
+                let dependents = this.getDependents(node, true);
+                for (let d of dependents) {
+                    if (!visited.has(d)) {
+                        this.getTopologicalDependents(d, visited, list);
+                    }
+                }
+                // Insert node to the front of iterator to retain Topological ordering
+                list.insert(node);
+                return list;
+            }
+            /**
+            Returns the nodes within this dependency graph.
+            */
+            getNodes() {
+                return this.relationships.keys();
+            }
+            /**
+            Returns a string representation of this dependency graph.
+            */
+            toString() {
+                // Build a string of dependencies in the form of from->to
+                let result = "";
+                for (let from of this.getNodes()) {
+                    for (let to of this.getDependents(from, true)) {
+                        result += from.toString() + '->' + to.toString() + '\n';
+                    }
+                }
+                return result;
+            }
+            /**
+            Generates a DependenyGraph object from a string representation.
+            */
+            static Generate(str) {
+                let graph = new DependencyGraph();
+                // Prime the loop
+                let start = 0;
+                let index = str.indexOf('->', start);
+                while (index > 0) {
+                    // Get the first part of the dependency
+                    let from = str.substring(start, index);
+                    // Get the second part of the dependency
+                    start = index + 1;
+                    index = str.indexOf('\n', index);
+                    let to = str.substring(start + 1, index);
+                    // Add the dependency to the graph
+                    graph.addDependency(from, to);
+                    // Get the next string if there is one
+                    start = index + 1;
+                    index = str.indexOf('->', start);
+                }
+                return graph;
+            }
+        }
+
+        /**
+        * This controller manages the dependencies between elements.
+        */
+        class Controller {
+            /**
+            * Constructs a controller
+            */
+            constructor() {
+                this.dependencyGraph = new DependencyGraph();
+                this.elements = new Map();
+            }
+            /**
+            * Clears all the elements from this controller.
+            */
+            clear() {
+                this.dependencyGraph = new DependencyGraph(); // TODO: implement clear method
+                this.elements.clear();
+            }
+            /**
+            * Adds an element to this controller.
+            */
+            add(element) {
+                this.dependencyGraph.add(element);
+                this.elements.set(element.id, element);
+            }
+            /**
+            * Removes an element from this controller.
+            */
+            remove(element) {
+                this.dependencyGraph.remove(element);
+                this.elements.delete(element.id);
+            }
+            /**
+            * Returns the element corresponding to the unique string identifier
+            */
+            get(id) {
+                return this.elements.get(id);
+            }
+            /**
+            * Updates this element and all of its dependents
+            */
+            update(element) {
+                let deps = this.dependencyGraph.getDependents(element);
+                for (let d of deps) {
+                    d.update();
+                }
+            }
+        }
+
+        /**
+        * A basic element of the interactive ecosystem. Each element has an unique
+        * identifier, an update function to be defined by the user, and the ability to
+        * add dependencies on other elements.
+        */
+        class BaseElement {
+            /**
+            * Constructs the elements and adds it into the current controller.
+            */
+            constructor() {
+                // give this element an unique id
+                this._id = `${this.constructor.name.toLowerCase()}-${BaseElement.count++}`;
+                // add this element to the controller
+                BaseElement.controller.add(this);
+            }
+            /**
+            * Clears the static data structures holding elements and resets the count.
+            */
+            static clear(disable = false) {
+                BaseElement.count = 0;
+                BaseElement.controller.clear();
+                BaseElement.disable = disable;
+            }
+            /**
+            * Returns the unique generated identifier associated with this element.
+            */
+            get id() {
+                return this._id;
+            }
+            /**
+            * Removes this element from the DOM and from the Element controller.
+            */
+            remove() {
+                BaseElement.controller.remove(this);
+            }
+            /**
+            * Declares this element dependent on the provided element(s).
+            */
+            addDependency(...elements) {
+                for (let element of elements) {
+                    BaseElement.controller.dependencyGraph.addDependency(element, this);
+                }
+            }
+            /**
+            * Updates all of the elements that depend on this element.
+            */
+            updateDependents() {
+                BaseElement.controller.update(this);
+            }
+        }
+        /**
+        * Allows for the events attatched to elements to be disabled.
+        */
+        BaseElement.disable = false;
+        /**
+        * The controller manages the dependencies between elements. Every element
+        * is added to this controller upon creation.
+        */
+        BaseElement.controller = new Controller();
+        /**
+        * This number uniquely identifes elements
+        */
+        BaseElement.count = 0;
+
+        /**
+        * This class defines the basic shape for all SVG elements within our library.
+        */
+        class Elementt extends BaseElement {
+            // TODO: tranform object/property?
+            /**
+            * Constructs the elements and adds it into the current controller.
+            */
+            constructor(root) {
+                super();
+                // store the root element and set the id attribute
+                this.root = root;
+                this.root.id = this.id;
+                this.root.classList.add(this.constructor.name.toLowerCase());
+                // make the root's style declaration available
+                this.style = this.root.style;
+                this.classList = this.root.classList;
+            }
+            /**
+            * Sets the provided attribute with the value. WARNING: Elements are given
+            * a unique id by default. Changing the id may have unintended consequences.
+            * Similarily, the style and class attributes should be accessed through the
+            * properties "style" and "classList".
+            */
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            /**
+            * Returns the value associated with the attribute.
+            */
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            /**
+            * Appends the element as a child within this element.
+            */
+            appendChild(child) {
+                this.root.appendChild(child.root);
+                return child;
+            }
+            /**
+            * Inserts the element before the first child within this element.
+            */
+            prependChild(child) {
+                this.root.prepend(child.root);
+                return child;
+            }
+            /**
+            * Returns true if this element contains the argument element.
+            */
+            contains(element) {
+                return this.root.contains(element.root);
+            }
+            /**
+            * Removes this element from the DOM and from the Element controller.
+            */
+            remove() {
+                BaseElement.controller.remove(this);
+                this.root.remove();
+            }
+            /**
+            * Removes all child elements from this element.
+            */
+            clear() {
+                let child;
+                while (child = this.root.firstChild) {
+                    BaseElement.controller.get(child.id).remove();
+                }
+            }
+            /**
+            * Returns the bounding box of this element. Note, this is different from the
+            * getBoundingClientRect method since the bounding box is affected by the
+            * current viewPort.
+            *
+            * If this element's root is not a SVGGraphics element as is the case for the
+            * marker, title, and more element, then null is returned instead of a DOMRect.
+            */
+            getBoundingBox() {
+                if (this.root instanceof SVGGraphicsElement) {
+                    return this.root.getBBox();
+                }
+                else {
+                    return null;
+                }
+            }
+        }
+
+        /**
+        * A shape is a basic geometric element.
+        */
+        class Shape extends Elementt {
+            /**
+            * Constructs a shape element with the provided root.
+            */
+            constructor(root) {
+                super(root);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            /**
+            * Returns the location of the point on the path.
+            */
+            getPointAtLength(x) {
+                return this.root.getPointAtLength(x);
+            }
+            /**
+            * Returns the total length of this path.
+            */
+            getTotalLength() {
+                return this.root.getTotalLength();
+            }
+            /**
+            * Returns true if the point is contained within this shapes fill
+            */
+            isPointInFill(point) {
+                return this.root.isPointInFill(point);
+            }
+            /**
+            * Returns true if the point is contained within this shapes stroke
+            */
+            isPointInStroke(point) {
+                return this.root.isPointInStroke(point);
+            }
+        }
+
+        /**
+        * A circle is a basic geometric element with a position and radius.
+        *
+        * Geometric Properties:
+        *   - cx
+        *   - cy
+        *   - r
+        */
+        class Circle extends Shape {
+            /**
+            * Constructs a rectangle element at the position (x,y)
+            */
+            constructor(cx, cy, r) {
+                let circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttributeNS(null, 'cx', cx.toString());
+                circle.setAttributeNS(null, 'cy', cy.toString());
+                circle.setAttributeNS(null, 'r', r.toString());
+                super(circle);
+            }
+            /**
+            * Returns the radius of this circle.
+            */
+            get r() {
+                return this.root.r.baseVal.value;
+            }
+            /**
+            * Sets the value of the radius of this circle.
+            */
+            set r(value) {
+                this.root.r.baseVal.value = value;
+            }
+            /**
+            * Returns the x position of the rectangle
+            */
+            get cx() {
+                return this.root.cx.baseVal.value;
+            }
+            /**
+            * Sets the x position of the rectangle
+            */
+            set cx(n) {
+                this.root.cx.baseVal.value = n;
+            }
+            /**
+            * Returns the y position of the rectangle
+            */
+            get cy() {
+                return this.root.cy.baseVal.value;
+            }
+            /**
+            * Sets the y position of the rectangle
+            */
+            set cy(n) {
+                this.root.cy.baseVal.value = n;
+            }
+            getPath() {
+                throw new Error("Method not implemented.");
+            }
+            /**
+            * Translates the circle to a new position by changing the x and y attributes.
+            */
+            //TODO: Change
+            translate(x, y) {
+                this.root.cx.baseVal.value = this.root.cx.baseVal.value + x;
+                this.root.cy.baseVal.value = this.root.cy.baseVal.value + y;
+            }
+            /**
+            * Returns the fill style of this circle
+            */
+            get fill() {
+                return this.root.style.fill;
+            }
+            /**
+            * Sets the fill style of this circle
+            */
+            set fill(s) {
+                this.root.style.fill = s;
+            }
+            /**
+            * Returns the stroke style of this circle
+            */
+            get stroke() {
+                return this.root.style.stroke;
+            }
+            /**
+            * Sets the stroke style of this circle
+            */
+            set stroke(s) {
+                this.root.style.stroke = s;
+            }
+        }
+
+        /**
+        * An ellipse is a basic element with a position, x-radius, and y-radius
+        *
+        * Geometric Properties:
+        *   - cx
+        *   - cy
+        *   - rx
+        *   - ry
+        */
+        class Ellipse extends Shape {
+            /**
+            * Constructs a ellipse element at the position (cx,cy) with a rx and ry radius.
+            */
+            constructor(cx, cy, rx, ry) {
+                let ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+                ellipse.setAttributeNS(null, 'cx', cx.toString());
+                ellipse.setAttributeNS(null, 'cy', cy.toString());
+                ellipse.setAttributeNS(null, 'rx', rx.toString());
+                ellipse.setAttributeNS(null, 'ry', ry.toString());
+                super(ellipse);
+            }
+            /**
+            * Returns the x position of the rectangle
+            */
+            get cx() {
+                return this.root.cx.baseVal.value;
+            }
+            /**
+            * Sets the x position of the rectangle
+            */
+            set cx(n) {
+                this.root.cx.baseVal.value = n;
+            }
+            /**
+            * Returns the y position of the rectangle
+            */
+            get cy() {
+                return this.root.cy.baseVal.value;
+            }
+            /**
+            * Sets the y position of the rectangle
+            */
+            set cy(n) {
+                this.root.cy.baseVal.value = n;
+            }
+            /**
+            * Returns the width of the rectangle
+            */
+            get rx() {
+                return this.root.rx.baseVal.value;
+            }
+            /**
+            * Sets the width of the rectangle
+            */
+            set rx(n) {
+                this.root.rx.baseVal.value = n;
+            }
+            /**
+            * Returns the height of the rectangle
+            */
+            get ry() {
+                return this.root.ry.baseVal.value;
+            }
+            /**
+            * Sets the height of the rectangle
+            */
+            set ry(n) {
+                this.root.ry.baseVal.value = n;
+            }
+            /**
+            * Translates the ellipse to a new position by changing the x and y attributes.
+            */
+            translate(x, y) {
+                this.root.cx.baseVal.value = this.root.cx.baseVal.value + x;
+                this.root.cy.baseVal.value = this.root.cy.baseVal.value + y;
+            }
+            /**
+            * Returns the fill style of this ellipse
+            */
+            get fill() {
+                return this.root.style.fill;
+            }
+            /**
+            * Sets the fill style of this ellipse
+            */
+            set fill(s) {
+                this.root.style.fill = s;
+            }
+            /**
+            * Returns the stroke style of this ellipse
+            */
+            get stroke() {
+                return this.root.style.stroke;
+            }
+            /**
+            * Sets the stroke style of this ellipse
+            */
+            set stroke(s) {
+                this.root.style.stroke = s;
+            }
+        }
+
+        /**
+        * A circle is a basic shape element with a start and end position.
+        *
+        * Geometric Properties:
+        *   - x1
+        *   - y1
+        *   - x2
+        *   - y2
+        */
+        class Line extends Shape {
+            /**
+            * Constructs a line between the points (x1, y1) and (x2, y2)
+            */
+            constructor(x1, y1, x2, y2) {
+                let line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttributeNS(null, 'x1', x1.toString());
+                line.setAttributeNS(null, 'y1', y1.toString());
+                line.setAttributeNS(null, 'x2', x2.toString());
+                line.setAttributeNS(null, 'y2', y2.toString());
+                super(line);
+            }
+            /**
+            * Returns the x position of the start position
+            */
+            get x1() {
+                return this.root.x1.baseVal.value;
+            }
+            /**
+            * Sets the x position of the start position
+            */
+            set x1(x1) {
+                this.root.x1.baseVal.value = x1;
+            }
+            /**
+            * Returns the y position of the start position
+            */
+            get y1() {
+                return this.root.y1.baseVal.value;
+            }
+            /**
+            * Sets the y position of the start position
+            */
+            set y1(y1) {
+                this.root.y1.baseVal.value = y1;
+            }
+            /**
+            * Returns the x position of the end position
+            */
+            get x2() {
+                return this.root.x2.baseVal.value;
+            }
+            /**
+            * Sets the x position of the end position
+            */
+            set x2(x2) {
+                this.root.x2.baseVal.value = x2;
+            }
+            /**
+            * Returns the y position of the end position
+            */
+            get y2() {
+                return this.root.y2.baseVal.value;
+            }
+            /**
+            * Sets the y position of the end position
+            */
+            set y2(y2) {
+                this.root.y2.baseVal.value = y2;
+            }
+            /*
+            * Translates the position of the line to a new position from its current
+            * position. TODO: this is inconsistent with other translate methods within
+            * the elements. Probably best to conform to how SVG implements translate with
+            * the transform attribute, and then implement a move method or something.
+            */
+            translate(x, y) {
+                this.root.x1.baseVal.value += x;
+                this.root.y1.baseVal.value += y;
+                this.root.x2.baseVal.value += x;
+                this.root.y2.baseVal.value += y;
+            }
+            /**
+            * Returns the fill style of this line
+            */
+            get fill() {
+                return this.root.style.fill;
+            }
+            /**
+            * Sets the fill style of this line
+            */
+            set fill(s) {
+                this.root.style.fill = s;
+            }
+            /**
+            * Returns the stroke style of this line
+            */
+            get stroke() {
+                return this.root.style.stroke;
+            }
+            /**
+            * Sets the stroke style of this line
+            */
+            set stroke(s) {
+                this.root.style.stroke = s;
+            }
+        }
+
+        /**
+        * A rectangle is a basic element with a position, width, and height. The
+        * position refers to the top left corner of the rectangle
+        */
+        class Rectangle extends Shape {
+            /**
+            * Constructs a rectangle element at the position (x,y)
+            */
+            constructor(x, y, width, height) {
+                let rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                rect.setAttributeNS(null, 'x', x.toString());
+                rect.setAttributeNS(null, 'y', y.toString());
+                rect.setAttributeNS(null, 'width', width.toString());
+                rect.setAttributeNS(null, 'height', height.toString());
+                super(rect);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            /**
+            * Returns the x position of the rectangle
+            */
+            get x() {
+                return this.root.x.baseVal.value;
+            }
+            /**
+            * Sets the x position of the rectangle
+            */
+            set x(n) {
+                this.root.x.baseVal.value = n;
+            }
+            /**
+            * Returns the y position of the rectangle
+            */
+            get y() {
+                return this.root.y.baseVal.value;
+            }
+            /**
+            * Sets the y position of the rectangle
+            */
+            set y(n) {
+                this.root.y.baseVal.value = n;
+            }
+            /**
+            * Returns the width of the rectangle
+            */
+            get width() {
+                return this.root.width.baseVal.value;
+            }
+            /**
+            * Sets the width of the rectangle
+            */
+            set width(n) {
+                this.root.width.baseVal.value = n;
+            }
+            /**
+            * Returns the height of the rectangle
+            */
+            get height() {
+                return this.root.height.baseVal.value;
+            }
+            /**
+            * Sets the height of the rectangle
+            */
+            set height(n) {
+                this.root.height.baseVal.value = n;
+            }
+            /*
+            * Translates the position of the rectangle to a new position from its current
+            * position. TODO: this is inconsistent with other translate methods within
+            * the elements. Probably best to conform to how SVG implements translate with
+            * the transform attribute, and then implement a move method or something.
+            */
+            translate(x, y) {
+                this.root.x.baseVal.value = this.root.x.baseVal.value + x;
+                this.root.y.baseVal.value = this.root.y.baseVal.value + y;
+            }
+            /**
+            * Returns the fill style of this rectangle
+            */
+            get fill() {
+                return this.root.style.fill;
+            }
+            /**
+            * Sets the fill style of this rectangle
+            */
+            set fill(s) {
+                this.root.style.fill = s;
+            }
+            /**
+            * Returns the stroke style of this rectangle
+            */
+            get stroke() {
+                return this.root.style.stroke;
+            }
+            /**
+            * Sets the stroke style of this rectangle
+            */
+            set stroke(s) {
+                this.root.style.stroke = s;
+            }
+        }
+
+        /**
+        * A path element allows for the creation of complicated shapes and curves.
+        */
+        class Path extends Shape {
+            /**
+            * Construct a new path element with a string of commands.
+            */
+            constructor(d) {
+                // TODO: see comment above the type of the root
+                let path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', d);
+                super(path);
+            }
+            /**
+            * Returns the d attribute
+            */
+            get d() {
+                return this.root.getAttribute('d');
+            }
+            /**
+            * Sets the d attribute
+            */
+            set d(d) {
+                this.root.setAttribute('d', d);
+            }
+            /**
+            * Returns the path representation of the provided shape.
+            */
+            static getPath(shape) {
+                throw Error('Not Implemented');
+            }
+        }
+
+        /**
+        * A polygon is a closed shape defined by a series of points.
+        */
+        class Polygon extends Shape {
+            constructor(points) {
+                let polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttributeNS(null, 'points', points);
+                super(polygon);
+            }
+            get points() {
+                return this.root.getAttribute('points');
+            }
+        }
+
+        class Description extends Elementt {
+            constructor() {
+                let desc = document.createElementNS('http://www.w3.org/2000/svg', 'desc');
+                super(desc);
+            }
+        }
+
+        class MetaData extends Elementt {
+            constructor() {
+                let metadata = document.createElementNS('http://www.w3.org/2000/svg', 'metadata');
+                super(metadata);
+            }
+        }
+
+        class Title extends Elementt {
+            constructor() {
+                let title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                super(title);
+            }
+        }
+
+        class ClipPath extends Elementt {
+            constructor() {
+                let clipPath = document.createElementNS('http://www.w3.org/2000/svg', 'clipPath');
+                super(clipPath);
+            }
+            circle(cx, cy, r) {
+                return this.appendChild(new Circle(cx, cy, r));
+            }
+            ellipse(cx, cy, rx, ry) {
+                return this.appendChild(new Ellipse(cx, cy, rx, ry));
+            }
+            line(x1, y1, x2, y2) {
+                return this.appendChild(new Line(x1, y1, x2, y2));
+            }
+            path(d) {
+                return this.appendChild(new Path(d));
+            }
+            polygon(points) {
+                return this.appendChild(new Polygon(points));
+            }
+            rectangle(x, y, width, height) {
+                return this.appendChild(new Rectangle(x, y, width, height));
+            }
+            description() {
+                return this.appendChild(new Description());
+            }
+            metadata() {
+                return this.appendChild(new MetaData());
+            }
+            title() {
+                return this.appendChild(new Title());
+            }
+        }
+
+        class Definitions extends Elementt {
+            constructor() {
+                let defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+                super(defs);
+            }
+        }
+
+        /**
+        * A hyper link element.
+        */
+        class A extends Elementt {
+            /**
+            * Constructs a link element with the provided href.
+            */
+            constructor(href) {
+                let root = document.createElementNS('http://www.w3.org/2000/svg', 'a');
+                root.setAttributeNS(null, 'href', href);
+                super(root);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+        }
+
+        class Symbol$1 extends Elementt {
+            constructor() {
+                let symbol = document.createElementNS('http://www.w3.org/2000/svg', 'symbol');
+                super(symbol);
+            }
+            // geometric properties
+            get x() {
+                throw new Error('Not Implemented');
+            }
+            set x(value) {
+                throw new Error('Not Implemented');
+            }
+            get y() {
+                throw new Error('Not Implemented');
+            }
+            set y(value) {
+                throw new Error('Not Implemented');
+            }
+            get width() {
+                throw new Error('Not Implemented');
+            }
+            set width(value) {
+                throw new Error('Not Implemented');
+            }
+            get height() {
+                throw new Error('Not Implemented');
+            }
+            set height(value) {
+                throw new Error('Not Implemented');
+            }
+            // attributes
+            get preserveAspectRatio() {
+                throw new Error('Not Implemented');
+            }
+            set preserveAspectRatio(value) {
+                throw new Error('Not Implemented');
+            }
+            get viewBox() {
+                return this.root.getAttribute('viewBox');
+            }
+            set viewBox(value) {
+                this.root.setAttributeNS(null, 'viewBox', value);
+            }
+            get refX() {
+                throw new Error('Not Implemented');
+            }
+            set refX(value) {
+                throw new Error('Not Implemented');
+            }
+            get refY() {
+                throw new Error('Not Implemented');
+            }
+            set refY(value) {
+                throw new Error('Not Implemented');
+            }
+        }
+
+
+        /**
+        * A tspan element is a text element that allows the user to change the style
+        * or position of the rendered text inside the tspan.
+        */
+        class TSpan extends Elementt {
+            /**
+            * Constructs a tspan element
+            */
+            constructor(str) {
+                let tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                tspan.innerHTML = str;
+                super(tspan);
+            }
+            /**
+            * The text contents of this tspan element
+            */
+            get text() {
+                return this.root.innerHTML;
+            }
+            /**
+            * Sets the text contents of this tspan element to the provided string
+            */
+            set text(str) {
+                this.root.innerHTML = str;
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            /**
+            * Creates a child tspan element.
+            */
+            tspan(str) {
+                let tspan = new TSpan(str);
+                this.root.appendChild(tspan.root);
+                return tspan;
+            }
+        }
+
+        /**
+        * Text is a basic element containing string contents
+        */
+        class Text extends Elementt {
+            /**
+            * Constructs text at the position (x,y) with the provided string
+            */
+            constructor(x, y, str = '') {
+                let text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttributeNS(null, 'x', x.toString());
+                text.setAttributeNS(null, 'y', y.toString());
+                if (str != undefined) {
+                    text.innerHTML = str;
+                }
+                super(text);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            /**
+            * Sets the contents of this element
+            */
+            set contents(str) {
+                this.root.innerHTML = str;
+            }
+            /**
+            * Sets the contents of this element
+            */
+            get contents() {
+                return this.root.innerHTML;
+            }
+            /**
+            * Gets the x position of this element
+            */
+            get x() {
+                return Number(this.root.getAttribute('x'));
+            }
+            /**
+            * Gets the y position of this element
+            */
+            get y() {
+                return Number(this.root.getAttribute('y'));
+            }
+            /**
+            * Sets the x position of this element
+            */
+            set x(value) {
+                this.root.setAttribute('x', value.toString());
+            }
+            /**
+            * Sets the y position of this element
+            */
+            set y(value) {
+                this.root.setAttribute('y', value.toString());
+            }
+            /**
+            * Returns the length of the text
+            */
+            get length() {
+                const context = document.createElement("canvas").getContext("2d");
+                return context.measureText(this.root.innerHTML).width;
+            }
+            text(x, y, str) {
+                let text = new Text(x, y, str);
+                this.root.appendChild(text.root);
+                return text;
+            }
+            tspan(text) {
+                let tspan = new TSpan(text);
+                this.root.appendChild(tspan.root);
+                return tspan;
+            }
+        }
+
+        class Use extends Elementt {
+            constructor(x, y, width, height) {
+                let element = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                element.setAttributeNS(null, 'x', x.toString());
+                element.setAttributeNS(null, 'y', y.toString());
+                element.setAttributeNS(null, 'width', width.toString());
+                element.setAttributeNS(null, 'height', height.toString());
+                super(element);
+            }
+            get href() {
+                return this.root.href.baseVal;
+            }
+            set href(value) {
+                this.root.href.baseVal = value;
+            }
+            /**
+          * Returns the x position of the rectangle
+          */
+            get x() {
+                return this.root.x.baseVal.value;
+            }
+            /**
+            * Sets the x position of the rectangle
+            */
+            set x(n) {
+                this.root.x.baseVal.value = n;
+            }
+            /**
+            * Returns the y position of the rectangle
+            */
+            get y() {
+                return this.root.y.baseVal.value;
+            }
+            /**
+            * Sets the y position of the rectangle
+            */
+            set y(n) {
+                this.root.y.baseVal.value = n;
+            }
+            /**
+            * Returns the width of the rectangle
+            */
+            get width() {
+                return this.root.width.baseVal.value;
+            }
+            /**
+            * Sets the width of the rectangle
+            */
+            set width(n) {
+                this.root.width.baseVal.value = n;
+            }
+            /**
+            * Returns the height of the rectangle
+            */
+            get height() {
+                return this.root.height.baseVal.value;
+            }
+            /**
+            * Sets the height of the rectangle
+            */
+            set height(n) {
+                this.root.height.baseVal.value = n;
+            }
+        }
+
+        /**
+        * A marker is a shape that can be repeatably drawn on a shape.
+        */
+        class Marker extends Elementt {
+            /**
+            * Constructs a rectangle element at the position (x,y)
+            */
+            constructor(refX, refY, width, height) {
+                let element = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                element.setAttributeNS(null, 'refX', refX.toString());
+                element.setAttributeNS(null, 'refY', refY.toString());
+                element.setAttributeNS(null, 'markerWidth', width.toString());
+                element.setAttributeNS(null, 'markerHeight', height.toString());
+                super(element);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            get viewBox() {
+                return this.getAttribute('viewBox');
+            }
+            set viewBox(value) {
+                this.setAttribute('viewBox', value);
+            }
+            get refX() {
+                return this.root.refX.baseVal.value;
+            }
+            set refX(value) {
+                this.root.refX.baseVal.value = value;
+            }
+            get refY() {
+                return this.root.refY.baseVal.value;
+            }
+            set refY(value) {
+                this.root.refY.baseVal.value = value;
+            }
+            get width() {
+                return this.root.markerWidth.baseVal.value;
+            }
+            set width(value) {
+                this.root.markerWidth.baseVal.value = value;
+            }
+            get height() {
+                return this.root.markerHeight.baseVal.value;
+            }
+            set height(value) {
+                this.root.markerHeight.baseVal.value = value;
+            }
+            // Descriptive methods
+            description() {
+                return this.appendChild(new Definitions());
+            }
+            metadata() {
+                return this.appendChild(new MetaData());
+            }
+            title() {
+                return this.appendChild(new Title());
+            }
+            // Structural methods
+            defs() {
+                return this.appendChild(new Definitions());
+            }
+            group() {
+                return this.appendChild(new Group());
+            }
+            svg() {
+                return this.appendChild(new SVG());
+            }
+            symbol() {
+                return this.appendChild(new Symbol$1());
+            }
+            use(x, y, width, height) {
+                return this.appendChild(new Use(x, y, width, height));
+            }
+            // Shape methods
+            circle(cx, cy, r) {
+                return this.appendChild(new Circle(cx, cy, r));
+            }
+            ellipse(cx, cy, rx, ry) {
+                return this.appendChild(new Ellipse(cx, cy, rx, ry));
+            }
+            line(x1, y1, x2, y2) {
+                return this.appendChild(new Line(x1, y1, x2, y2));
+            }
+            path(d) {
+                return this.appendChild(new Path(d));
+            }
+            polygon(points) {
+                return this.appendChild(new Polygon(points));
+            }
+            rectangle(x, y, width, height) {
+                return this.appendChild(new Rectangle(x, y, width, height));
+            }
+            // other methods
+            text(x, y, str) {
+                return this.appendChild(new Text(x, y, str));
+            }
+        }
+
+        class Script extends Elementt {
+            /**
+            * Constructs a new sript element.
+            */
+            constructor() {
+                let title = document.createElementNS('http://www.w3.org/2000/svg', 'script');
+                super(title);
+            }
+            // comments inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comments inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+        }
+
+        /**
+        * This class represents a SVG element. There are four geometric properties x, y,
+        * width, and height. The (x,y) properties only affect nested SVG elements.
+        */
+        class SVG extends Elementt {
+            /**
+            * Constructs a svg element.
+            */
+            constructor(x, y, width, height) {
+                let svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                if (x) {
+                    svg.setAttributeNS(null, 'x', x.toString());
+                }
+                if (y) {
+                    svg.setAttributeNS(null, 'y', y.toString());
+                }
+                if (width) {
+                    svg.setAttributeNS(null, 'width', width.toString());
+                }
+                if (height) {
+                    svg.setAttributeNS(null, 'height', height.toString());
+                }
+                super(svg);
+            }
+            /**
+            * Constructs and returns a SVG object within the DOM.  If the provided
+            * argument is an HTMLElement appends the interactive within that element. If
+            * the provided a value is a string, appends the interactive within the HTML
+            * element with the corresponding ID. If no element is found throws an error.
+            */
+            static SVG(idOrElement, x, y, width, height) {
+                // get the container element
+                let container;
+                if (typeof idOrElement == "string") {
+                    container = document.getElementById(idOrElement);
+                    if (container === null || container === undefined) {
+                        throw new Error(`There is no HTML element with the id: ${idOrElement}`);
+                    }
+                }
+                else {
+                    container = idOrElement;
+                }
+                // construct and append the svg
+                let svg = new SVG(x, y, width, height);
+                container.appendChild(svg.root);
+                return svg;
+            }
+            /**
+            * Return the width of this svg element.
+            */
+            get width() {
+                // return this.root.width.baseVal.value;
+                return parseInt(this.root.getAttribute('width'));
+            }
+            /**
+            * Set the width of this svg element.
+            */
+            set width(value) {
+                // this.root.width.baseVal.value = value;
+                this.root.setAttributeNS(null, 'width', value.toString());
+            }
+            /**
+            * Returns the height of this svg element.
+            */
+            get height() {
+                // return this.root.height.baseVal.value;
+                return parseInt(this.root.getAttribute('height'));
+            }
+            /**
+            * Sets the height of this svg element to the provided value.
+            */
+            set height(value) {
+                // this.root.height.baseVal.value = value;
+                this.root.setAttributeNS(null, 'height', value.toString());
+            }
+            get x() {
+                return this.root.x.baseVal.value;
+            }
+            set x(value) {
+                this.root.x.baseVal.value = value;
+            }
+            get y() {
+                return this.root.y.baseVal.value;
+            }
+            set y(value) {
+                this.root.y.baseVal.value = value;
+            }
+            get viewBox() {
+                return this.root.getAttribute('viewBox');
+            }
+            set viewBox(value) {
+                this.root.setAttribute('viewBox', value);
+            }
+            setViewBox(x, y, width, height) {
+                this.viewBox = `${x} ${y} ${width} ${height}`;
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            // descriptive elements
+            description() {
+                return this.appendChild(new Description());
+            }
+            metadata() {
+                return this.appendChild(new MetaData());
+            }
+            title() {
+                return this.appendChild(new Title());
+            }
+            // shape elements
+            circle(cx, cy, r) {
+                return this.appendChild(new Circle(cx, cy, r));
+            }
+            ellipse(cx, cy, rx, ry) {
+                return this.appendChild(new Ellipse(cx, cy, rx, ry));
+            }
+            line(x1, y1, x2, y2) {
+                return this.appendChild(new Line(x1, y1, x2, y2));
+            }
+            path(d) {
+                return this.appendChild(new Path(d));
+            }
+            polygon(points) {
+                return this.appendChild(new Polygon(points));
+            }
+            rectangle(x, y, width, height) {
+                return this.appendChild(new Rectangle(x, y, width, height));
+            }
+            // structural elements
+            defs() {
+                return this.appendChild(new Definitions());
+            }
+            group() {
+                return this.appendChild(new Group());
+            }
+            svg(x, y, width, height) {
+                return this.appendChild(new SVG(x, y, width, height));
+            }
+            symbol() {
+                return this.appendChild(new Symbol$1());
+            }
+            use(x, y, width, height) {
+                return this.appendChild(new Use(x, y, width, height));
+            }
+            // typography elements
+            text(x, y, str) {
+                return this.appendChild(new Text(x, y, str));
+            }
+            // other elements
+            /**
+            * Constructs and appends an 'a' (link) element within this element.
+            */
+            a(href) {
+                return this.appendChild(new A(href));
+            }
+            /**
+            * Constructs and appends a 'clipPath' element within this element.
+            */
+            clipPath() {
+                return this.appendChild(new ClipPath());
+            }
+            /**
+            * Constructs and appends a 'marker' element within this element.
+            */
+            marker(refX, refY, width, height) {
+                return this.appendChild(new Marker(refX, refY, width, height));
+            }
+            /**
+            * Constructs and appends a 'script' element within this element.
+            */
+            script() {
+                return this.appendChild(new Script());
+            }
+        }
+
+        /**
+        * A group is a structural element that allows for elements to be grouped
+        * together and have styles and transformations applied to the elements in the
+        * group.
+        */
+        class Group extends Elementt {
+            /**
+            * Constructs a rectangle element at the position (x,y)
+            */
+            constructor() {
+                let group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                super(group);
+            }
+            // comment inherited from base class
+            setAttribute(name, value) {
+                this.root.setAttribute(name, value);
+                return this;
+            }
+            // comment inherited from base class
+            getAttribute(name) {
+                return this.root.getAttribute(name);
+            }
+            // Descriptive methods
+            description() {
+                return this.appendChild(new Description());
+            }
+            metadata() {
+                return this.appendChild(new MetaData());
+            }
+            title() {
+                return this.appendChild(new Title());
+            }
+            // Structural methods
+            defs() {
+                return this.appendChild(new Definitions());
+            }
+            group() {
+                return this.appendChild(new Group());
+            }
+            svg(x, y, width, height) {
+                return this.appendChild(new SVG(x, y, width, height));
+            }
+            symbol() {
+                return this.appendChild(new Symbol$1());
+            }
+            use(x, y, width, height) {
+                return this.appendChild(new Use(x, y, width, height));
+            }
+            // Shape methods
+            circle(cx, cy, r) {
+                return this.appendChild(new Circle(cx, cy, r));
+            }
+            ellipse(cx, cy, rx, ry) {
+                return this.appendChild(new Ellipse(cx, cy, rx, ry));
+            }
+            line(x1, y1, x2, y2) {
+                return this.appendChild(new Line(x1, y1, x2, y2));
+            }
+            path(d) {
+                return this.appendChild(new Path(d));
+            }
+            polygon(points) {
+                return this.appendChild(new Polygon(points));
+            }
+            rectangle(x, y, width, height) {
+                return this.appendChild(new Rectangle(x, y, width, height));
+            }
+            // other methods
+            /**
+            * Constructs and appends a text element within this element.
+            */
+            text(x, y, str) {
+                return this.appendChild(new Text(x, y, str));
+            }
+            /**
+            * Constructs and appends an 'a' (link) within this element.
+            */
+            a(href) {
+                return this.appendChild(new A(href));
+            }
+            /**
+            * Constructs and appends a clipPath within this element
+            */
+            clipPath() {
+                return this.appendChild(new ClipPath());
+            }
+        }
+
+        /**
+        * An object that takes in user input in the form of user events.
+        */
+        class Input extends Group {
+            /**
+            * Constructs a new input group.
+            */
+            constructor() {
+                super();
+                // set the default behavior of the onchange function
+                let input = this;
+                input._onchange = function () {
+                    input.updateDependents();
+                };
+            }
+            /**
+            * This function is called whenever the state of an input element changes. The
+            * default behavior of this function is to update the dependents of this
+            * element. WARNING: changing this function can have unintented side effects.
+            */
+            set onchange(func) {
+                this._onchange = func;
+            }
+            get onchange() {
+                return this._onchange;
+            }
+        }
+
+        /**
+        * A button that when pressed fires an onclick event.
+        */
+        class Button extends Input {
+            /**
+            * Constructs a button at the position (x,y)
+            */
+            constructor(x, y, str) {
+                super();
+                /**
+                * The state of the checkbox
+                */
+                this._count = 0;
+                this._x = x;
+                this._y = y;
+                this._active = false;
+                this.root.setAttribute('transform', `translate(${x},${y})`);
+                this.root.classList.add('button');
+                // Create a text element
+                this.label = new Text(0, 1, str);
+                this.label.root.setAttribute('alignment-baseline', 'middle');
+                this.label.root.style.textAnchor = 'middle';
+                // TODO: why is this.text.root.textLength returning zero?
+                this.box = this.rectangle(0, -16, this.label.length * 2 + 16, 32);
+                this.box.root.setAttribute('rx', '2px');
+                this.label.x = this.box.x + this.box.width / 2;
+                this.appendChild(this.label);
+                let temp = this;
+                this.root.onmousedown = () => {
+                    temp.active = !this.active;
+                };
+                this.root.onmouseup = () => {
+                    temp.active = !this.active;
+                };
+            }
+            /**
+            * Returns the top left x position of this button.
+            */
+            get x() {
+                return this._x;
+            }
+            /**
+            * Sets the top left x position of this button.
+            */
+            set x(value) {
+                this._x = value;
+                this.root.setAttribute('transform', `translate(${this._x},${this._y})`);
+            }
+            /**
+            * Returns the top left x position of this button.
+            */
+            get y() {
+                return this._y;
+            }
+            /**
+            * Sets the top left y position of this button.
+            */
+            set y(value) {
+                this._y = value;
+                this.root.setAttribute('transform', `translate(${this._x},${this._y})`);
+            }
+            /**
+            * Returns how many times this button has been pressed. Count does not
+            * increment until the button has been released.
+            */
+            get count() {
+                return this._count;
+            }
+            /**
+            * Returns true if the button is actively being pressed.
+            */
+            get active() {
+                return this._active;
+            }
+            /**
+            * Allows the user to synthetically "press" the button and put it into an
+            * active state.
+            */
+            set active(value) {
+                // if transitioning from an active to inactive state count the state change
+                if (this.active && !value) {
+                    this._count++;
+                }
+                this._active = value;
+                if (this._active) {
+                    this.box.style.fill = '#f8f8f8';
+                    this.box.style.stroke = '#333333';
+                    this.box.style.strokeWidth = '1px';
+                    this.label.style.fill = '#404040';
+                }
+                else {
+                    this.box.style.fill = '';
+                    this.label.style.fill = '';
+                }
+                this.onchange();
+            }
+            /**
+            * Fires when the user clicks the left button on the button.
+            */
+            set onclick(handler) {
+                this.root.onclick = handler;
+                this.onchange();
+            }
+        }
+
+        /**
+        * A checkbox with an label. The can be checked, unchecked, and related to other
+        * elements.
+        */
+        class CheckBox extends Input {
+            /**
+            * Constructs a control at the position (x,y)
+            */
+            constructor(x, y, text, value) {
+                super();
+                /**
+                * The state of the checkbox
+                */
+                this._value = false;
+                this.root.setAttribute('transform', `translate(${x},${y})`);
+                this.box = new Rectangle(-6.5, -6.5, 13, 13);
+                this.box.root.setAttribute('rx', '2px');
+                this.label = new Text(18, 1, text);
+                this.label.root.setAttribute('alignment-baseline', 'middle');
+                this.root.appendChild(this.box.root);
+                this.root.appendChild(this.label.root);
+                let temp = this;
+                this.value = value;
+                this.box.root.onmousedown = function () {
+                    temp.toggle();
+                };
+                this.addDependency(this.box);
+            }
+            /**
+            * Sets the value to true and visually checks the box.
+            */
+            set value(value) {
+                if (this._value = value) {
+                    this.box.style.fill = '#404040';
+                }
+                else {
+                    this.box.style.fill = '';
+                }
+                this.onchange();
+            }
+            /**
+            * Returns true if the box is checked, false if it is not.
+            */
+            get value() {
+                return this._value;
+            }
+            /**
+            * Converts the current true/false state of the checkbox to a zero or one.
+            */
+            number() {
+                return this.value ? 1 : 0;
+            }
+            /**
+            * Toggles the state of this check box.
+            */
+            toggle() {
+                this.value = !this.value;
+            }
+        }
+
+        /**
+        * A control point is a draggable two dimensional point.
+        */
+        class Control extends Input {
+            /**
+            * Constructs a control at the position (x,y)
+            */
+            constructor(x, y) {
+                super();
+                /**
+                * Modifying the transform function allows for the control to be constrained
+                * to a path or constrained to the region enclosed in a path.
+                */
+                this.constrain = function (_oldPosition, newPosition) {
+                    return newPosition;
+                };
+                // create the svg components
+                this.point = this.circle(0, 0, Control.pointRadius);
+                this.handle = this.circle(0, 0, Control.handleRadius);
+                this.point.classList.add('point');
+                this.handle.classList.add('handle');
+                this.root.classList.add('control');
+                // initialize instance variables
+                this._x = x;
+                this._y = y;
+                this._dx = 0;
+                this._dy = 0;
+                this.update = () => { };
+                // translate the control to its initial position
+                this.translate(x, y);
+                // register event handlers
+                this.root.onmousedown = this.handleMouseDown.bind(this);
+                this.handle.root.onmouseout = this.handleMouseOut.bind(this);
+                this.handle.root.addEventListener('touchstart', this.handleTouchStart.bind(this), { passive: false });
+                // initialize window event listeners only once
+                if (!Control.initalized) {
+                    window.onmouseover = Control.handleMouseOver;
+                    window.onmousemove = Control.handleMouseMove;
+                    window.onmouseup = Control.handleInputEnd;
+                    window.addEventListener('touchend', Control.handleInputEnd, { passive: false });
+                    window.addEventListener('touchmove', Control.handleTouchMove, { passive: false });
+                    Control.initalized = true;
+                }
+            }
+            /**
+            * Handles when the user moves their mouse over the window. If there is an
+            * active control, the control's position is updated.
+            */
+            static handleMouseMove(event) {
+                if (Control.active != null) {
+                    Control.handleMoveTo(event.clientX, event.clientY);
+                    event.preventDefault();
+                }
+            }
+            /**
+            * Handles a touch move event. If there is an active control, the control's
+            * position is updated.
+            */
+            static handleTouchMove(event) {
+                if (Control.active != null) {
+                    Control.handleMoveTo(event.touches[0].clientX, event.touches[0].clientY);
+                    event.preventDefault();
+                }
+            }
+            /**
+            * Moves the active control to the new (x,y) position.
+            */
+            static handleMoveTo(clientX, clientY) {
+                // let deltaX = clientX - Control.prevX;
+                // let deltaY = clientY - Control.prevY;
+                // Control.prevX = clientX;
+                // Control.prevY = clientY;
+                // let x = Control.active.x + deltaX;
+                // let y = Control.active.y + deltaY;
+                let x = clientX + Control.slopX;
+                let y = clientY + Control.slopY;
+                Control.active.translate(x, y);
+            }
+            // static handleMoveTo( clientX, clientY) {
+            //
+            //   let viewPort = Control.active.root.viewportElement;
+            //   let viewBox = viewPort.getAttribute('viewBox');
+            //
+            //   let transform = viewPort.getAttribute('transform');
+            //   let start = transform.indexOf(',');
+            //   let end = transform.indexOf(')');
+            //
+            //   let yDirection = parseInt(transform.substr(start + 1, end - start));
+            //   let width = parseInt(viewPort.getAttribute('width'));
+            //   let height = parseInt(viewPort.getAttribute('height'));
+            //   let viewBoxArray = viewBox.split(' ');
+            //   // let originX = parseInt(viewBoxArray[0]);
+            //   // let originY = parseInt(viewBoxArray[1]);
+            //   let visibleWidth = parseInt(viewBoxArray[2]);
+            //   let visibleHeight = parseInt(viewBoxArray[3]);
+            //   let scaleX = width/visibleWidth;
+            //   let scaleY = height/visibleHeight;
+            //
+            //   let deltaX = clientX - Control.prevX;
+            //   let deltaY = clientY - Control.prevY;
+            //   Control.prevX = clientX;
+            //   Control.prevY = clientY;
+            //   let x = Control.active.x + deltaX/scaleX;
+            //   let y = Control.active.y + deltaY/scaleY*yDirection;
+            //
+            //   Control.active.translate( x, y);
+            //   event.preventDefault();
+            // }
+            /**
+            * Handles when a use mouses up over the window or ends their touch event.
+            */
+            static handleInputEnd(event) {
+                if (Control.active != null) {
+                    // remove highlighting from the active control and set to null
+                    Control.active.handle.root.classList.remove('highlight');
+                    Control.active = null;
+                    // fire a mouseover event to highlight either: an interactive control,
+                    // the recently active control, or a different element entirely.
+                    // Currently, whichever element is highest in the DOM order will be the
+                    // target. In the future the most recently active Control could be
+                    // prioritized for user experience.
+                    if (event.type != "touchend") {
+                        event.target.dispatchEvent(new MouseEvent('mouseover', {
+                            view: window,
+                            bubbles: true,
+                            cancelable: true
+                        }));
+                    }
+                }
+            }
+            /**
+            * When a user mouses over a control, add the class "highlight" to the control
+            * handle.
+            */
+            static handleMouseOver(event) {
+                if (Control.active == null && !BaseElement.disable && event.target.tagName == 'circle') {
+                    event.target.classList.add('highlight');
+                }
+            }
+            /**
+            * When a user mouses out of a control handle and when there is no active
+            * control, remove the "highlight" class from the event target.
+            */
+            handleMouseOut(event) {
+                if (Control.active == null) {
+                    event.target.classList.remove('highlight');
+                }
+            }
+            /**
+            * Handle when a user mouses down over a Control's handle. Stores the error in
+            * the user's click as well as stores which Control the user is clicking.
+            */
+            handleMouseDown(event) {
+                if (!BaseElement.disable) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    Control.active = this;
+                    Control.slopX = Control.active.x - event.clientX;
+                    Control.slopY = Control.active.y - event.clientY;
+                    Control.prevX = event.clientX;
+                    Control.prevY = event.clientY;
+                }
+            }
+            /**
+            * Handle when a user touches over a Control's handle. Stores the error in
+            * the user's input as well as stores which Control the user is clicking.
+            */
+            handleTouchStart(event) {
+                if (!BaseElement.disable) {
+                    Control.active = this;
+                    Control.slopX = Control.active.x - event.touches[0].clientX;
+                    Control.slopY = Control.active.y - event.touches[0].clientY;
+                    event.preventDefault();
+                }
+            }
+            /**
+            * Moves the control to a new location
+            */
+            translate(x, y) {
+                // call the internal transform function
+                let point = this.constrain({ x: this.x, y: this.y }, { x: x, y: y });
+                // update the instance data
+                this._dx = point.x - this._x;
+                this._dy = point.y - this._y;
+                this._x = point.x;
+                this._y = point.y;
+                // transform the position of the contorl
+                this.root.setAttribute('transform', `translate( ${this.x}, ${this.y})`);
+                // call the onchange function
+                this.onchange();
+            }
+            /**
+            * Updates the x position of the control.
+            */
+            set x(x) {
+                this._dx = x - this.x;
+                this._x = x;
+                this.root.setAttribute('transform', 'translate( ' + this.x + ', ' + this.y + ')');
+            }
+            /**
+            * Updates the y position of the control.
+            */
+            set y(y) {
+                this._dy = y - this.y;
+                this._y = y;
+                this.root.setAttribute('transform', 'translate( ' + this.x + ', ' + this.y + ')');
+            }
+            /**
+            * Gets the x position of the control.
+            */
+            get x() {
+                return this._x;
+            }
+            /**
+            * Gets the y position of the control.
+            */
+            get y() {
+                return this._y;
+            }
+            /**
+            * Gets the change in x position of this control.
+            */
+            get dx() {
+                return this._dx;
+            }
+            /**
+            * Gets the change in y position of this control.
+            */
+            get dy() {
+                return this._dy;
+            }
+            /**
+            * Constrains the movement of this control point to the path of the provided
+            * element.
+            */
+            constrainTo(element) {
+                this.addDependency(element);
+                if (element instanceof Path) {
+                    throw Error('not implemented');
+                }
+                else if (element instanceof Circle) {
+                    this.constrain = function (_oldPosition, newPosition) {
+                        // Calculate the angle between the current coordinate and the origin
+                        let angle = Math.atan2(newPosition.y - element.cy, newPosition.x - element.cx);
+                        // Set the controls position to the vector in the direction of the angle
+                        // above and with the magnitude of the radius of the circle.
+                        let x = element.r * Math.cos(angle) + element.cx;
+                        let y = element.r * Math.sin(angle) + element.cy;
+                        // Return the new position
+                        return { x: x, y: y };
+                    };
+                }
+                else if (element instanceof Rectangle) {
+                    this.constrain = function (_oldPosition, newPosition) {
+                        let x = newPosition.x;
+                        let y = newPosition.y;
+                        // min and max points
+                        let minX = element.x;
+                        let minY = element.y;
+                        let maxX = element.x + element.width;
+                        let maxY = element.y + element.height;
+                        let cx = element.x + element.width / 2;
+                        let cy = element.y + element.height / 2;
+                        if (y >= maxY && x >= maxX) {
+                            y = maxY;
+                            x = maxX;
+                        }
+                        else if (y <= minY && x <= minX) {
+                            y = minY;
+                            x = minY;
+                        }
+                        else if (y <= minY && x >= maxX) {
+                            y = minY;
+                            x = maxX;
+                        }
+                        else if (y >= maxY && x <= minX) {
+                            y = maxY;
+                            x = minX;
+                        }
+                        else if (x > minX && x < maxX) {
+                            if (y > cy) {
+                                y = maxY;
+                            }
+                            else {
+                                y = minY;
+                            }
+                        }
+                        else {
+                            if (x > cx) {
+                                x = maxX;
+                            }
+                            else {
+                                x = minX;
+                            }
+                        }
+                        //  else if ( y - cy < x - cx ) {
+                        //   y = minY;
+                        // } else if ( x - cx < y - cy ) {
+                        //   x = minX;
+                        // }
+                        //
+                        // if( x - cx >= y - cy) {
+                        //   x = maxX;
+                        // }
+                        // if( y - cy < x - cx) {
+                        //   y = minY;
+                        // }
+                        // if( x - cx < y - cy) {
+                        //   x = minX;
+                        // }
+                        // constrain
+                        // if( x < minX || (x > minX && x <= cx)) {x = minX;}
+                        // if( y < minY || (y > minY && y <= cy)) {y = minY;}
+                        // if( x > maxX || (x < maxX && x > cx)) {x = maxX;}
+                        // if( y > maxY || (y < maxY && y > cy)) {y = maxY;}
+                        return { x: x, y: y };
+                    };
+                }
+            }
+            /**
+            * Constrains the movement of this control point to the path of the provided
+            * element.
+            */
+            constrainWithin(element) {
+                this.addDependency(element);
+                if (element instanceof Path) {
+                    throw Error('not implemented');
+                }
+                else if (element instanceof Circle) {
+                    this.constrain = function (_oldPosition, newPosition) {
+                        // Contain the position within the circle
+                        if (Math.hypot(newPosition.y - element.cy, newPosition.x - element.cx) > element.r) {
+                            // Calculate the angle between the current coordinate and the origin
+                            let angle = Math.atan2(newPosition.y - element.cy, newPosition.x - element.cx);
+                            let x = element.r * Math.cos(angle) + element.cx;
+                            let y = element.r * Math.sin(angle) + element.cy;
+                            return { x: x, y: y };
+                        }
+                        else {
+                            return newPosition;
+                        }
+                    };
+                }
+                else if (element instanceof Rectangle) {
+                    this.constrain = function (_oldPosition, newPosition) {
+                        let x = newPosition.x;
+                        let y = newPosition.y;
+                        // min and max points
+                        let x1 = element.x;
+                        let y1 = element.y;
+                        let x2 = element.x + element.width;
+                        let y2 = element.y + element.height;
+                        // constrain
+                        if (x < x1) {
+                            x = x1;
+                        }
+                        if (y < y1) {
+                            y = y1;
+                        }
+                        if (x > x2) {
+                            x = x2;
+                        }
+                        if (y > y2) {
+                            y = y2;
+                        }
+                        return { x: x, y: y };
+                    };
+                }
+            }
+            /**
+            * Constrains the control to follow the path of the circle specified by the
+            * arguments. TODO: add a method to constrain the control to a path
+            */
+            constrainToCircle(cx, cy, r) {
+                // set the constrain function
+                this.constrain = function (_oldPosition, newPosition) {
+                    // Calculate the angle between the current coordinate and the origin
+                    let angle = Math.atan2(newPosition.y - cy, newPosition.x - cx);
+                    // Set the controls position to the vector in the direction of the angle
+                    // above and with the magnitude of the radius of the circle.
+                    let x = r * Math.cos(angle) + cx;
+                    let y = r * Math.sin(angle) + cy;
+                    // Return the new position
+                    return { x: x, y: y };
+                };
+            }
+            /**
+            * Constrains the control to the box defined by the points (x1, y1) and
+            * (x2, y2). The first point defines the top-left corner of the box, the
+            * second the bottom-right corner of the box.
+            */
+            constrainWithinBox(x1, y1, x2, y2) {
+                this.constrain = function (_oldPosition, newPosition) {
+                    let x = newPosition.x;
+                    let y = newPosition.y;
+                    if (x < x1) {
+                        x = x1;
+                    }
+                    if (y < y1) {
+                        y = y1;
+                    }
+                    if (x > x2) {
+                        x = x2;
+                    }
+                    if (y > y2) {
+                        y = y2;
+                    }
+                    return { x: x, y: y };
+                };
+            }
+            constrainWithinRange(minX, maxX) {
+                this.constrain = function (_oldPosition, newPosition) {
+                    let x = newPosition.x;
+                    let y = newPosition.y;
+                    if (x < minX) {
+                        x = minX;
+                    }
+                    if (x > maxX) {
+                        x = maxX;
+                    }
+                    return { x: x, y: y };
+                };
+            }
+            /**
+            * Constrain this control to only move left and right along its current x
+            * position.
+            */
+            constrainToX(minX = -Infinity, maxX = Infinity) {
+                this.constrain = function (oldPosition, newPosition) {
+                    return { x: newPosition.x, y: oldPosition.y };
+                };
+            }
+            /**
+            * Constrain this control to only move up and down along its current y
+            * position.
+            */
+            constrainToY() {
+                this.constrain = function (oldPosition, newPosition) {
+                    return { x: oldPosition.x, y: newPosition.y };
+                };
+            }
+        }
+        // Describes the size of the control handle and point
+        Control.pointRadius = 4;
+        Control.handleRadius = 13;
+        // Keeps track of the active control and the error in the user's click
+        Control.active = null;
+        Control.slopX = 0;
+        Control.slopY = 0;
+        Control.prevX = 0;
+        Control.prevY = 0;
+        // Keep track of whether global event listeners have been initialized
+        Control.initalized = false;
+
+        // A first pass implementation of a control circle. In the future, it seems to
+        // make sense for basic elements to be draggable. I think this would mean
+        // making a draggable interface or class that contains window event handlers.
+        // Another alternative would be moving some of that logic into the controller or
+        // interactive wrapper class.
+        class ControlCircle extends Control {
+            /**
+            * Constructs a control at the position (x,y)
+            */
+            constructor(x, y) {
+                super(x, y);
+                this.point.r = ControlCircle.circleRadius;
+                this.handle.r = ControlCircle.circleRadius + .8;
+                this.handle.style.strokeWidth = '2';
+                // this.point.style.fill = 'lightblue';
+                this.point.style.fill = this.handle.style.stroke;
+            }
+        }
+        // Describes the size of the control handle and point
+        ControlCircle.circleRadius = 10;
+
+        /**
+        *  Radio Buttons with labels. Only one of the checkboxes will be checked at any given time.
+        */
+        class RadioControl extends Input {
+            /*
+            * labels: the labels for the radio buttons
+            * x: x position of control
+            * y: y position of the control
+            * index: the starting button to be highlighted
+            */
+            constructor(x, y, labels, index = 0) {
+                if (labels === undefined || labels.length == 0) {
+                    throw new Error('Labels must not be empty');
+                }
+                super();
+                this.root.setAttribute("transform", `translate(${x},${y})`);
+                this.index = index;
+                let counter = 0;
+                this.list = [];
+                let rc = this;
+                labels.forEach((element, i) => {
+                    let checkbox = new CheckBox(0, counter, element, false);
+                    if (i == index) {
+                        checkbox.value = true;
+                    }
+                    checkbox.box.root.setAttribute('rx', '8px');
+                    checkbox.box.root.onmousedown = function () {
+                        rc.handleMouseDown(i);
+                        checkbox.value = true;
+                        rc.index = i;
+                        rc.onchange();
+                    };
+                    this.root.appendChild(checkbox.root);
+                    this.list.push(checkbox);
+                    counter += 24;
+                });
+            }
+            get value() {
+                return this.list[this.index].label.contents;
+            }
+            /*
+            * returns the text of the currently selected button
+            */
+            getCurrentValue() {
+                return this.list[this.index].label;
+            }
+            /*
+            * when a button is selected, deselect all others
+            */
+            handleMouseDown(index) {
+                this.list.forEach(element => {
+                    element.value = false;
+                });
+            }
+        }
+
+        /**
+        *  Dropdown with menu item labels that can be selected.
+        */
+        class DropdownControl extends Input {
+            /**
+             * Constructs a dropdown control with given option labels at the given (x,y) position
+             * and with the default selection as the label at the given default index.
+             */
+            constructor(x, y, optionLabels, defaultIndex) {
+                if (optionLabels === undefined || optionLabels.length === 0) {
+                    throw new Error('Dropdown control must have at least one option');
+                }
+                if (defaultIndex < 0 || defaultIndex >= optionLabels.length) {
+                    throw new Error('Default index must be within bounds of option labels array.');
+                }
+                super();
+                this.optionLabels = optionLabels;
+                this.currentIndex = defaultIndex;
+                this.expanded = false;
+                this.textWidth = new Text(0, 0, this.getLongestString(optionLabels)).length;
+                this.x = x;
+                this.y = y;
+                this.collapsedView = new Group();
+                this.collapsedView.setAttribute("transform", `translate(${this.x},${this.y})`);
+                this.currSelection = new Group();
+                this.currSelection.root.classList.add('dropdown-control-curr-selection-box');
+                this.currSelectionText = new Text(0, 1, this.optionLabels[this.currentIndex]);
+                this.currSelectionText.root.setAttribute('alignment-baseline', 'middle');
+                this.currSelectionText.style.textAnchor = 'middle';
+                this.currSelectionBox = new Rectangle(0, -16, this.textWidth * 3 + 16, 32);
+                this.currSelectionText.x = this.currSelectionBox.x + this.currSelectionBox.width / 2;
+                this.currSelection.appendChild(this.currSelectionBox);
+                this.currSelection.appendChild(this.currSelectionText);
+                let dropdownButton = new Group();
+                dropdownButton.root.classList.add('dropdown-control-button');
+                let buttonBox = new Rectangle(this.textWidth * 3 + 16, -16, 32, 32);
+                let radius = 8;
+                let downArrow = new Path(` M ${radius + this.textWidth * 3 + 32} ${radius * Math.sin(-2 * Math.PI / 3) + 1}
+                                 L ${radius * Math.cos(-2 * Math.PI / 3) + this.textWidth * 3 + 28} ${radius * Math.sin(-2 * Math.PI / 3) + 1}
+                                 L ${(radius + this.textWidth * 3 + 32 + radius * Math.cos(-2 * Math.PI / 3) + this.textWidth * 3 + 28) / 2} ${radius * Math.sin(-4 * Math.PI / 3) + 1}
+                                 Z`);
+                downArrow.style.fill = '#333333';
+                dropdownButton.appendChild(buttonBox);
+                dropdownButton.appendChild(downArrow);
+                let _this = this;
+                dropdownButton.root.onmousedown = function () {
+                    if (!_this.expanded) {
+                        _this.updateExpandedView();
+                        _this.root.appendChild(_this.expandedView.root);
+                        _this.expanded = true;
+                    }
+                    else {
+                        _this.root.removeChild(_this.expandedView.root);
+                        _this.expanded = false;
+                    }
+                    _this.onchange();
+                };
+                this.collapsedView.appendChild(this.currSelection);
+                this.collapsedView.appendChild(dropdownButton);
+                this.root = this.collapsedView.root;
+                this.root.id = this.id;
+            }
+            get value() {
+                return this.optionLabels[this.currentIndex];
+            }
+            /**
+            *  Updates the expanded view of menu options.
+            */
+            updateExpandedView() {
+                this.expandedView = new Group();
+                this.collapsedView.setAttribute("transform", `translate(${this.x},${this.y})`);
+                let currSelection = new Group();
+                currSelection.root.classList.add('dropdown-control-menu-option');
+                let currSelectionText = new Text(0, 1, this.optionLabels[this.currentIndex]);
+                currSelectionText.root.setAttribute('alignment-baseline', 'middle');
+                currSelectionText.style.textAnchor = 'middle';
+                let currSelectionBox = new Rectangle(0, -16, this.textWidth * 3 + 16, 32);
+                currSelectionText.x = currSelectionBox.x + currSelectionBox.width / 2;
+                currSelection.appendChild(currSelectionBox);
+                currSelection.appendChild(currSelectionText);
+                this.expandedView.appendChild(currSelection);
+                let _this = this;
+                let rectY = 32;
+                this.optionLabels.forEach((label, i) => {
+                    if (i == this.currentIndex) {
+                        return;
+                    }
+                    let menuOption = new Group();
+                    menuOption.root.classList.add('dropdown-control-menu-option');
+                    let optionText = new Text(0, 1 + rectY, label);
+                    optionText.root.setAttribute('alignment-baseline', 'middle');
+                    optionText.style.textAnchor = 'middle';
+                    let optionBox = new Rectangle(0, -16 + rectY, this.textWidth * 3 + 16, 32);
+                    optionText.x = optionBox.x + optionBox.width / 2;
+                    menuOption.appendChild(optionBox);
+                    menuOption.appendChild(optionText);
+                    menuOption.root.onmousedown = function () {
+                        _this.root.removeChild(_this.expandedView.root);
+                        _this.expanded = false;
+                        _this.currentIndex = i;
+                        _this.currSelectionText.contents = label;
+                        _this.onchange();
+                    };
+                    this.expandedView.appendChild(menuOption);
+                    rectY += 32;
+                });
+            }
+            /**
+            * Returns the text of the current selection in from the dropdown menu.
+            */
+            getCurrentSelection() {
+                return this.optionLabels[this.currentIndex];
+            }
+            /**
+            * Returns the longest string in the given string array.
+            */
+            getLongestString(list) {
+                if (list.length == 0) {
+                    return "";
+                }
+                let longest = list[0];
+                for (let i = 1; i < list.length; i++) {
+                    if (list[i].length > longest.length) {
+                        longest = list[i];
+                    }
+                }
+                return longest;
+            }
+        }
+
+        /**
+        * A horizontal slider is an object that allows for a control to be moved along
+        * a user- defined range. The slider has a minimum value and a maximum value
+        * which default to the range [0, 1].
+        */
+        class Slider extends Input {
+            /**
+            * Constructs the slider at the position (x,y). The leftmost edge of the line
+            * is placed at this location.
+            */
+            constructor(x, y, options) {
+                super();
+                let width;
+                let value;
+                this.x = x;
+                this.y = y;
+                options.width ? width = options.width : width = 100;
+                options.value ? value = options.value : value = 0;
+                options.min ? this._min = options.min : this._min = 0;
+                options.max ? this._max = options.max : this._max = 1;
+                this._line = this.line(x, y, x + width, y);
+                this._line.root.style.strokeWidth = '1.5';
+                this._line.root.style.strokeLinecap = 'round';
+                this._control = new ControlCircle(x + value, y);
+                this._control.constrainWithinBox(x, y, x + width, y);
+                this._control.point.r -= 1.5;
+                this._control.handle.r -= 2;
+                this._control.handle.style.strokeWidth = '2';
+                this.appendChild(this._control);
+                this.value = value;
+                let slider = this;
+                let fn = slider._control.onchange;
+                slider._control.onchange = function () {
+                    fn();
+                    slider.onchange();
+                };
+            }
+            /**
+            * Returns the width of the display line
+            */
+            get width() {
+                return this._line.x2 - this._line.x1;
+            }
+            /**
+            * Sets the width of the display line
+            */
+            set width(width) {
+                this._line.x2 = this._line.x1 + width;
+                this._control.constrainWithinBox(this._line.x1, this._line.y1, this._line.x2, this._line.y2);
+            }
+            /**
+            * Returns the value currently represented by this slider.
+            */
+            get value() {
+                return (this._control.x - this._line.x1) / this.width * (this.range) + this._min;
+            }
+            /**
+            * Sets the value currently represented by this slider.
+            */
+            set value(n) {
+                this._control.x = this._line.x1 + (n - this._min) / this.range * (this.width);
+            }
+            set step(value) {
+                let line = this._line;
+                this._control.constrain = function (oldPosition, newPosition) {
+                    let x = newPosition.x;
+                    let y = newPosition.y;
+                    // constrain to line
+                    if (x < line.x1) {
+                        x = line.x1;
+                    }
+                    if (y < line.y1) {
+                        y = line.y1;
+                    }
+                    if (x > line.x2) {
+                        x = line.x2;
+                    }
+                    if (y > line.y2) {
+                        y = line.y2;
+                    }
+                    // constrain to step size
+                    x = Math.floor(x / 50) * 50;
+                    return { x: x, y: y };
+                };
+            }
+            /**
+            * Returns the minimum possible value of the range.
+            */
+            get min() {
+                return this._min;
+            }
+            /**
+            * Sets the minimum possible value of the range.
+            */
+            set min(value) {
+                this._min = value;
+            }
+            /**
+            * Returns the maximum possible value of the range.
+            */
+            get max() {
+                return this._max;
+            }
+            /**
+            * Returns the maximum possible value of the range.
+            */
+            set max(value) {
+                this._max = value;
+            }
+            /**
+            * Returns the length of the range represented by this slider.
+            */
+            get range() {
+                return this.max - this.min;
+            }
+        }
+
+        /**
+        * A scubber element has
+        */
+        class Scrubber extends Slider {
+            // TODO: When the scrubber control is grabbed, active should be set to false and the animation cycle should be stopped.
+            // TODO: Reset done variable when the control is changed
+            // TODO: Show darker line of progress
+            /**
+            * Constructs a new scrubber element at the (x,y) position.
+            */
+            constructor(x, y, options) {
+                let defaultOptions = {
+                    width: 486
+                };
+                // combine the default configuration with the user's configuration
+                let config = { ...defaultOptions, ...options };
+                // make room for the play & pause button
+                config.width = config.width - 80;
+                super(x + 80, y, config);
+                this.active = false;
+                this.loop = false;
+                this.done = false;
+                let circleRadius = 16;
+                let playCircle = this.circle(0, 0, circleRadius);
+                playCircle.style.fill = '#eeeeee';
+                playCircle.style.stroke = '#333333';
+                playCircle.style.strokeWidth = '1px';
+                let radius = 8;
+                let playTriangle = this.path(` M ${radius} ${0}
+                                  L ${radius * Math.cos(-2 * Math.PI / 3)} ${radius * Math.sin(-2 * Math.PI / 3)}
+                                  L ${radius * Math.cos(-4 * Math.PI / 3)} ${radius * Math.sin(-4 * Math.PI / 3)}
+                                  Z`);
+                playTriangle.style.fill = '#333333';
+                this.playButton = this.group();
+                this.playButton.appendChild(playCircle);
+                this.playButton.appendChild(playTriangle);
+                this.playButton.setAttribute('transform', `translate( ${x}, ${y})`);
+                let pauseCircle = this.circle(0, 0, circleRadius);
+                pauseCircle.style.fill = '#eeeeee';
+                pauseCircle.style.stroke = '#333333';
+                pauseCircle.style.strokeWidth = '1px';
+                // TODO: style the lines with rounded end points
+                let pauseLines = this.path(` M ${-3.5} ${-5}
+                                L ${-3.5} ${5}
+                                M ${3.5} ${-5}
+                                L ${3.5} ${5}`);
+                pauseLines.style.stroke = '#333333';
+                pauseLines.style.strokeWidth = '2';
+                pauseLines.style.strokeLinecap = 'round';
+                this.pauseButton = this.group();
+                this.pauseButton.appendChild(pauseCircle);
+                this.pauseButton.appendChild(pauseLines);
+                this.pauseButton.setAttribute('transform', `translate( ${x + 42}, ${y})`);
+                let scrubber = this;
+                this.playButton.root.addEventListener('click', function () {
+                    scrubber.play();
+                });
+                this.pauseButton.root.addEventListener('click', function () {
+                    scrubber.pause();
+                });
+                let fn = this.onchange;
+                this.onchange = function () {
+                    if (scrubber.value == scrubber.max) {
+                        scrubber.done = true;
+                    }
+                    else {
+                        scrubber.done = false;
+                    }
+                    fn();
+                };
+            }
+            play() {
+                if (!this.active) {
+                    let scrubber = this;
+                    scrubber.active = true;
+                    if (this.done) {
+                        this.value = this.min;
+                        this.done = false;
+                        // TODO: change this.done to true when the control is "scrubbed" to the end
+                    }
+                    let stepSize = .0025 * scrubber.range;
+                    let step = function (timestamp) {
+                        scrubber.value = (scrubber.value + stepSize);
+                        if (scrubber.value > scrubber.max && !scrubber.loop) {
+                            scrubber.value = scrubber.max;
+                            scrubber.pause();
+                            // TODO: change play icon to reset icon
+                            scrubber.done = true;
+                            scrubber.onchange();
+                        }
+                        else {
+                            scrubber.value = scrubber.value % scrubber.max;
+                            scrubber.onchange();
+                            scrubber.requestID = window.requestAnimationFrame(step);
+                        }
+                    };
+                    // start animating
+                    window.requestAnimationFrame(step);
+                }
+            }
+            pause() {
+                this.active = false;
+                window.cancelAnimationFrame(this.requestID);
+            }
+        }
+
+        /**
+        * Returns a promise containing the response object.
+        */
+        function getURL(url) {
+            // Return a new promise.
+            return new Promise(function (resolve, reject) {
+                // Do the usual XHR stuff
+                var req = new XMLHttpRequest();
+                req.open('GET', url);
+                req.onload = function () {
+                    // This is called even on 404 etc so check the status
+                    if (req.status == 200) {
+                        // Resolve the promise with the response text
+                        resolve(req.response);
+                    }
+                    else {
+                        // Otherwise reject with the status text
+                        // which will hopefully be a meaningful error
+                        reject(Error(req.statusText));
+                    }
+                };
+                // Handle network errors
+                req.onerror = function () {
+                    reject(Error("Network Error"));
+                };
+                // Make the request
+                req.send();
+            });
+        }
+
+        /**
+        * Parses and returns the SVG documented represented by the string argument.
+        */
+        function parseSVG(svg) {
+            let parser = new DOMParser();
+            let doc = parser.parseFromString(svg, 'image/svg+xml');
+            return doc.documentElement;
+        }
+
+        class Icon extends Use {
+            /**
+            * Construct an icon element at the position (x,y) with the provided dimensions
+            */
+            constructor(x, y, width, height) {
+                super(x, y, width, height);
+                this.classList.add('icon');
+            }
+        }
+
+        /**
+        * A button that when pressed fires an onclick event.
+        */
+        class HoverBox extends Input {
+            constructor(str) {
+                super();
+                this._xBound = null;
+                this._yBound = null;
+                // Create a text element
+                this.label = new Text(0, 1, str);
+                this.label.root.setAttribute('alignment-baseline', 'middle');
+                this.label.root.style.textAnchor = 'middle';
+                this.box = this.rectangle(0, -16, this.label.length * 2 + 16, 32);
+                this.box.root.setAttribute('rx', '2px');
+                this.box.fill = 'white';
+                this.box.stroke = 'black';
+                this.box.style.fillOpacity = '0.9';
+                this.label.x = this.box.x + this.box.width / 2;
+                this.appendChild(this.label);
+                this._x = this.box.x;
+                this._y = this.box.y;
+                this.root.setAttribute('visibility', 'hidden');
+            }
+            set x(value) {
+                if (this._xBound) {
+                    if (value >= this._xBound - this.box.width)
+                        value = this._xBound - this.box.width;
+                }
+                this._x = value;
+                this.box.x = this._x;
+                this.label.x = this.box.x + this.box.width / 2;
+            }
+            set y(value) {
+                if (this._yBound) {
+                    if (value >= this._yBound - this.box.height)
+                        value = this._yBound - this.box.height;
+                    else if (value <= this.box.height)
+                        value = this.box.height;
+                }
+                this._y = value;
+                this.box.y = this._y - 37;
+                this.label.y = this.box.y + this.box.height / 2;
+            }
+            setBounds(x, y) {
+                this._xBound = x;
+                this._yBound = y;
+            }
+            setText(str) {
+                this.label.contents = str;
+                this.label.x = this.box.x + this.box.width / 2;
+                this.label.y = this.box.y + this.box.height / 2;
+                this.box.width = this.label.length * 2 + 16;
+            }
+            updatePosition(x, y) {
+                this.x = x;
+                this.y = y;
+            }
+            showHoverBox() {
+                this.root.removeAttribute('visibility');
+            }
+            hideHoverBox() {
+                this.root.setAttribute('visibility', 'hidden');
+            }
+        }
+
+        //Bostock had something about fitting text here, seems cool https://observablehq.com/@mbostock/fit-text-to-circle
+        /**
+        * A Node is a basic element with a position, radius, and text held within it.
+        */
+        class Node$1 extends Group {
+            /**
+            * Constructs a Node element at the position (x,y) with radius r containing the string text
+            */
+            constructor(cx, cy, rx, ry, text) {
+                super();
+                this.depth = 0;
+                this._cx = cx;
+                this._cy = cy;
+                this._text = text;
+                this._rx = rx;
+                this._ry = ry;
+                this.edges = new Set();
+                this.nodeName = new Text(cx, cy, text);
+                this.nodeName.style.textAnchor = "middle";
+                this.nodeName.root.setAttribute("alignment-baseline", "middle");
+                this.nodeEllipse = new Ellipse(cx, cy, rx, ry);
+                this.nodeEllipse.fill = '#f8f8f8';
+                this.children = [];
+                this.parents = [];
+                this.root.appendChild(this.nodeEllipse.root);
+                this.root.appendChild(this.nodeName.root);
+            }
+            /**
+            * Returns the number of edges coming out of this node.
+            */
+            edgeWeight() {
+                return this.edges.size;
+            }
+            /**
+            * Translates this node and all inner elements by x, y.
+            */
+            translate(x, y) {
+                this.nodeEllipse.cx += x;
+                this.nodeName.x += x;
+                this._cx += x;
+                this.nodeEllipse.cy += y;
+                this.nodeName.y += y;
+                this._cy += y;
+            }
+            /**
+            * Getter for the cx of this node.
+            */
+            get cx() {
+                return this._cx;
+            }
+            /**
+            * Getter for cy of this node
+            */
+            get cy() {
+                return this._cy;
+            }
+            set cx(cx) {
+                this._cx = cx;
+                this.nodeEllipse.cx = cx;
+                this.nodeName.x = cx;
+                this.edges.forEach(function (d) {
+                    d.redraw();
+                });
+            }
+            /**
+            * Getter for cy of this node
+            */
+            set cy(cy) {
+                this._cy = cy;
+                this.nodeEllipse.cy = cy;
+                this.nodeName.y = cy;
+                this.edges.forEach(function (d) {
+                    d.redraw();
+                });
+            }
+            /**
+            * Getter for rx of this node
+            */
+            get rx() {
+                return this._rx;
+            }
+            /**
+            * Getter for ry of this node
+            */
+            get ry() {
+                return this._ry;
+            }
+            /**
+            * Getter for the text of this node
+            */
+            get label() {
+                return this._text;
+            }
+            /**
+            * Setter for the text of this node
+            */
+            set label(text) {
+                this.nodeName.contents = text;
+                this._text = text;
+            }
+            /**
+            * Setter for rx of this node
+            */
+            set rx(rx) {
+                this._rx = rx;
+                this.nodeEllipse.rx = rx;
+            }
+            /**
+            * Setter for ry of this node
+            */
+            set ry(ry) {
+                this._ry = ry;
+                this.nodeEllipse.ry = ry;
+            }
+            /**
+            * Adds an edge to this node.
+            */
+            addEdge(edge) {
+                if (edge.nodeFrom == this) {
+                    this.children.push(edge.nodeTo);
+                }
+                else {
+                    this.depth = edge.nodeFrom.depth + 1;
+                    this.parents.push(edge.nodeFrom);
+                }
+                this.edges.add(edge);
+            }
+        }
+
+        //Make the function static and extend from Line
+        /**
+        * Creates a line connecting two edges, with an arrow if directed.
+        */
+        class Edge extends Line {
+            /**
+            * Constructs a line frmo the edge of the two circle elements.
+            */
+            constructor(nodeFrom, nodeTo, directed) {
+                let arr = Edge.calculateLinePosition(nodeFrom, nodeTo);
+                let arr2 = Edge.calculateLinePositionEllipse(nodeFrom, nodeTo);
+                if (directed && !Number.isNaN(arr[0])) {
+                    super(arr[0], arr[1], arr[2], arr[3]);
+                }
+                else {
+                    super(nodeFrom.cx, nodeFrom.cy, nodeTo.cx, nodeTo.cy);
+                }
+                this.directed = directed;
+                this.nodeFrom = nodeFrom;
+                this.nodeTo = nodeTo;
+            }
+            redraw() {
+                this.x1 = this.nodeFrom.cx;
+                this.y1 = this.nodeFrom.cy;
+                this.x2 = this.nodeTo.cx;
+                this.y2 = this.nodeTo.cy;
+            }
+            /**
+            * Function to find where the line connecting two circles should go. return an Array
+            * containing [x1, y1, x2, y2] of the line.
+            */
+            static calculateLinePosition(nodeFrom, nodeTo) {
+                let y1 = nodeFrom.nodeEllipse.cy;
+                let y2 = nodeTo.nodeEllipse.cy;
+                let x1 = nodeFrom.nodeEllipse.cx;
+                let x2 = nodeTo.nodeEllipse.cx;
+                let deltaY = y2 - y1;
+                let deltaX = x2 - x1;
+                let L = Math.sqrt((deltaX * deltaX) + (deltaY * deltaY));
+                let r1Lx = nodeFrom.nodeEllipse.rx / L * deltaX;
+                let r1Ly = nodeFrom.nodeEllipse.rx / L * deltaY;
+                let r2Lx = nodeTo.nodeEllipse.rx / L * deltaX;
+                let r2Ly = nodeTo.nodeEllipse.rx / L * deltaY;
+                let y1Prime = y1 + r1Ly;
+                let y2Prime = y2 - r2Ly;
+                let x1Prime = x1 + r1Lx;
+                let x2Prime = x2 - r2Lx;
+                return new Array(x1Prime, y1Prime, x2Prime, y2Prime);
+            }
+            static calculateLinePositionEllipse(nodeFrom, nodeTo) {
+                let newX = nodeFrom.cx - nodeTo.cx;
+                let newY = nodeFrom.cy - nodeTo.cy;
+                let theta = Math.atan(newY / newX);
+                // console.log(theta);
+                let cosx1 = Math.cos(theta);
+                let siny1 = Math.sin(theta);
+                let r2 = (nodeTo.cx * nodeTo.cy) / Math.sqrt(Math.pow(nodeTo.cx, 2) * Math.pow(cosx1, 2) + Math.pow(nodeTo.cy, 2) * Math.pow(siny1, 2));
+                let r1 = (nodeFrom.cx * nodeFrom.cy) / Math.sqrt(nodeFrom.cx * Math.pow(cosx1, 2) + nodeFrom.cy * Math.pow(siny1, 2));
+                // let lineX1 = r1 * cosx1
+                // console.log(r2);
+                return new Array(r2 * cosx1, r2 * siny1);
+            }
+        }
+
+        class Graph extends Group {
+            /**
+            * Constructs a graph
+            */
+            constructor(options) {
+                super();
+                this.nodes = [];
+                this.options = options;
+                let defs = this.defs();
+                defs.root.innerHTML = `<marker id="arrow" refX="10" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" style="fill:#333333;"></path></marker>`;
+                this.appendChild(defs);
+            }
+            /**
+            * Clears all nodes and all edges from the graph, removes them from the dom.
+            */
+            clear() {
+                for (var i = 0; i < this.nodes.length; i++) {
+                    this.nodes[i].edges.forEach(function (item) {
+                        item.remove();
+                    });
+                    this.nodes[i].remove();
+                }
+                this.nodes = [];
+            }
+            /**
+            * Adds a node at the given location with the given text. radius defaults to 20, 20
+            */
+            addNode(x, y, text, rx = 20, ry = 20) {
+                let node = new Node$1(x, y, rx, ry, text);
+                this.root.appendChild(node.root);
+                this.nodes.push(node);
+                return node;
+            }
+            /**
+            * Adds an edge without direction between the two given nodes.
+            */
+            addEdge(from, to) {
+                let edge = new Edge(from, to, this.options.directed);
+                if (this.options.directed) {
+                    edge.root.setAttribute('marker-end', `url(#arrow)`);
+                }
+                this.root.prepend(edge.root);
+                from.addEdge(edge);
+                to.addEdge(edge);
+                return edge;
+            }
+            /**
+            * Getter for the list of all nodes inside this graph.
+            */
+            getNodes() {
+                return this.nodes;
+            }
+            /**
+            * Returns the size of this graph
+            */
+            size() {
+                return this.nodes.length;
+            }
+            /**
+            * The tidy algorithm. Assuming a tree for now, pass it the root.
+            */
+            tidy(root) {
+                let orderedNodes = [];
+                this.postTraverse(root, orderedNodes);
+                let modMap = {};
+                let centerMap = {};
+                let min_dist = 100;
+                for (let node of orderedNodes) {
+                    centerMap[node.id] = 0;
+                    node.cx = 0;
+                    if (node.children.length != 0) {
+                        node.children[0].cx == 0;
+                        for (let i = 1; i < node.children.length; i++) {
+                            node.children[i].cx = node.children[i - 1].cx + min_dist;
+                        }
+                        centerMap[node.id] = (node.children[0].cx + node.children[node.children.length - 1].cx) / 2;
+                    }
+                }
+                // console.log(centerMap);
+                for (let node of orderedNodes) {
+                    // console.log(node.label);
+                    //Set the top y value
+                    node.cy = node.depth * 75 + 50;
+                    let leftSiblings = (node.parents[0] != undefined && node.parents[0].children[0] !== node);
+                    // console.log(leftSiblings);
+                    // console.log(centeredValue);
+                    if (!leftSiblings) {
+                        node.cx = centerMap[node.id];
+                        modMap[node.id] = 0;
+                    }
+                    else {
+                        node.cx = node.parents[0].children[node.parents[0].children.indexOf(node) - 1].cx + min_dist;
+                        modMap[node.id] = node.cx - centerMap[node.id];
+                    }
+                }
+                this.shiftChildrenByMod(root, 0, modMap);
+                modMap = this.clearModMap(modMap);
+                //dealing with conflicts, twice.
+                // modMap = this.fixConflicts(root, orderedNodes, modMap);
+                modMap = this.fixConflicts(root, orderedNodes, modMap);
+                this.fixOffScreen(root, modMap);
+                root.cx = (root.children[0].cx + root.children[root.children.length - 1].cx) / 2;
+            }
+            fixOffScreen(root, modMap) {
+                let leftList = {};
+                leftList = this.leftContour(root, leftList);
+                let maxShift = 0;
+                for (let i in leftList) {
+                    if (leftList[i] < maxShift) {
+                        maxShift = leftList[i];
+                    }
+                }
+                root.cx += maxShift + 50;
+                modMap[root.id] += maxShift + 50;
+                this.shiftChildrenByMod(root, 0, modMap);
+            }
+            fixConflicts(root, orderedNodes, modMap) {
+                for (let node of orderedNodes) {
+                    let leftSiblings = (node.parents[0] != undefined && node.parents[0].children[0] !== node);
+                    if (leftSiblings) {
+                        let currPos = -1;
+                        for (let i = 0; i < node.parents[0].children.length; i++) {
+                            if (node.parents[0].children[i] === node) {
+                                currPos = i;
+                                break;
+                            }
+                        }
+                        for (let i = currPos - 1; i >= 0; i--) {
+                            if (node.parents[0].children[i] === node) {
+                                break;
+                            }
+                            else {
+                                // console.log(node);
+                                let leftContList = {};
+                                leftContList = this.leftContour(node, leftContList);
+                                let rightContList = {};
+                                rightContList = this.rightContour(node.parents[0].children[i], rightContList);
+                                let shift = this.calculateShift(leftContList, rightContList);
+                                // console.log(shift);
+                                node.cx += shift;
+                                modMap[node.id] += shift;
+                                this.shiftChildrenByMod(root, 0, modMap);
+                                modMap = this.clearModMap(modMap);
+                                let nodePos = 0;
+                                for (let j = i; j < node.parents[0].children.length; j++) {
+                                    if (node.parents[0].children[j] === node) {
+                                        nodePos = j;
+                                        break;
+                                    }
+                                }
+                                for (let j = i + 1; j < nodePos; j++) {
+                                    node.parents[0].children[j].cx += shift / (nodePos - i);
+                                    modMap[node.parents[0].children[j].id] += shift / (nodePos - i);
+                                }
+                            }
+                        }
+                    }
+                }
+                // if(nodeShifted){
+                //   modMap = this.fixConflicts(root, orderedNodes, modMap)
+                // }
+                return modMap;
+            }
+            shiftChildrenByMod(node, mod, modMap) {
+                node.cx += mod;
+                for (let child of node.children) {
+                    this.shiftChildrenByMod(child, mod + modMap[node.id], modMap);
+                }
+            }
+            clearModMap(modMap) {
+                for (let i in modMap) {
+                    modMap[i] = 0;
+                }
+                return modMap;
+            }
+            calculateShift(leftList, rightList) {
+                let biggestOverlap = 0;
+                for (let depth in leftList) {
+                    if (rightList[depth] !== undefined && leftList[depth] - 100 < rightList[depth]) {
+                        biggestOverlap = Math.abs(leftList[depth] - 100 - rightList[depth]);
+                    }
+                }
+                return biggestOverlap;
+            }
+            leftContour(node, contourList) {
+                // console.log(node.id);
+                // console.log(node.depth);
+                if ((contourList[node.depth] === undefined) || contourList[node.depth] > node.cx) {
+                    contourList[node.depth] = node.cx;
+                }
+                for (let child of node.children) {
+                    contourList = this.leftContour(child, contourList);
+                }
+                return contourList;
+            }
+            rightContour(node, contourList) {
+                if ((contourList[node.depth] === undefined) || contourList[node.depth] < node.cx) {
+                    contourList[node.depth] = node.cx;
+                }
+                for (let child of node.children) {
+                    contourList = this.rightContour(child, contourList);
+                }
+                return contourList;
+            }
+            postTraverse(node, list) {
+                if (!node) {
+                    console.log("ERROR: Node was null");
+                }
+                if (node.children.length > 0) {
+                    node.children.forEach(childNode => {
+                        this.postTraverse(childNode, list);
+                    });
+                }
+                list.push(node);
+                return list;
+            }
+        }
+
+        /**
+     * Map class for displaying geographic maps of the world and its different parts.
+     */
+        class GeoMap extends SVG {
+            /*
+            * mapName: the name of the map you wish to render
+            * width: width of the map
+            * height: height of the map
+            */
+            constructor(featureName, externalData, options = {}) {
+                super();
+                let defaultOptions = {
+                    fill: "white",
+                    stroke: "black",
+                    strokeWidth: 0.5,
+                    nonScalingStroke: true
+                };
+                this.mapOptions = { ...defaultOptions, ...options };
+                this.featureName = featureName;
+                this.externalJSON = externalData;
+                this.featuresMap = new Map();
+                this.draw(featureName);
+            }
+            /**
+             * Renders the geo json onto the webpage.
+             * @param name name of the feature you want to draw. If left blank will draw all features
+             */
+            draw(name) {
+                this.clearPaths();
+                if (name != "")
+                    this.featureName = name;
+                else
+                    this.featureName = null;
+                this.loadExternalJSON(name);
+                this.featuresMap.forEach(element => {
+                    this.appendChild(element);
+                });
+                let bbox = this.root.getBBox();
+                this.setViewBox(bbox.x, bbox.y, bbox.width, bbox.height);
+            }
+            /**
+             * remove the feature with the passed in name from the geo map
+             * @param name the name of the feature you want to remove
+             */
+            removeFeature(name) {
+                if (this.featuresMap.has(name)) {
+                    let c = this.featuresMap.get(name);
+                    c.remove();
+                    this.featuresMap.delete(name);
+                }
+            }
+            /**
+             * Clears the interactive of all Map paths.
+             */
+            clearPaths() {
+                let t = this.root.getElementsByClassName('feature');
+                while (t.length > 0) {
+                    t[0].remove();
+                }
+                this.featuresMap = new Map();
+            }
+            /**
+             * Returns the path for the given feature name
+             * @param name name of the feature you want the path for
+             */
+            getPathForFeatureName(name) {
+                return this.featuresMap.get(name);
+            }
+            /**
+             * Returns all of the paths for the current map.
+             */
+            getAllFeaturePaths() {
+                return Array.from(this.featuresMap.values());
+            }
+            /**
+             * Returns an Array HTML Elements that are all of the plotted features.
+             */
+            getHTMLFeatureElements() {
+                return Array.from(this.root.children);
+            }
+            /**
+             * sets the viewbox of the interactive to the specified feature
+             */
+            setViewBoxToFeature(name) {
+                if (this.featuresMap.has(name)) {
+                    let bbox = this.featuresMap.get(name).root.getBBox();
+                    this.setViewBox(bbox.x, bbox.y, bbox.width, bbox.height);
+                }
+            }
+            /**
+             * Resets the viewbox to the entire map
+             */
+            resetViewBox() {
+                let bbox = this.root.getBBox();
+                this.setViewBox(bbox.x, bbox.y, bbox.width, bbox.height);
+            }
+            /**
+             * Sets up a group for the passsed in feature name
+             * @param name name of the feature
+             */
+            setupGroup(name) {
+                let g = new Group();
+                g.classList.remove("element");
+                g.root.setAttribute("name", name);
+                g.style.stroke = this.mapOptions.stroke;
+                g.style.fill = this.mapOptions.fill;
+                g.style.strokeWidth = this.mapOptions.strokeWidth.toString();
+                g.classList.add("feature");
+                return g;
+            }
+            /**
+             * Plots JSON into SVG paths. If the name param is provided only features that match
+             * those names will be plotted.
+             * @param name the optional name of the features you want to plot
+             */
+            loadExternalJSON(name) {
+                var json = this.externalJSON;
+                var listOfNames = null;
+                if (this.featureName != null)
+                    listOfNames = name.toLowerCase().split(',');
+                var i = 1;
+                try {
+                    for (let c = 0; c < json.features.length; c++) {
+                        for (let k = 0; k < json.features[c].geometry.coordinates.length; k++) {
+                            let currentFeatureName = json.features[c].properties.name;
+                            if (this.featureName != null) {
+                                if (listOfNames != null && !listOfNames.includes(currentFeatureName.toLowerCase())) {
+                                    continue;
+                                }
+                                else {
+                                    if (!this.featuresMap.has(currentFeatureName)) {
+                                        let g = this.setupGroup(currentFeatureName);
+                                        this.featuresMap.set(currentFeatureName, g);
+                                    }
+                                }
+                            }
+                            else {
+                                if (!this.featuresMap.has(currentFeatureName)) {
+                                    let g = this.setupGroup(currentFeatureName);
+                                    this.featuresMap.set(currentFeatureName, g);
+                                }
+                            }
+                            if (json.features[c].geometry.coordinates[k].length == 1) {
+                                let path = this.featuresMap.get(currentFeatureName).path('M 0 0');
+                                if (this.mapOptions.nonScalingStroke)
+                                    path.root.setAttribute("vector-effect", 'non-scaling-stroke');
+                                let startX = json.features[c].geometry.coordinates[k][0][0][0];
+                                let startY = json.features[c].geometry.coordinates[k][0][0][1];
+                                path.d = `M ${startX} ${-1 * startY}  `;
+                                for (i = 1; i < json.features[c].geometry.coordinates[k][0].length; i++) {
+                                    let x = json.features[c].geometry.coordinates[k][0][i][0];
+                                    let y = json.features[c].geometry.coordinates[k][0][i][1];
+                                    path.d += `L ${x} ${-1 * y} `;
+                                }
+                            }
+                            else {
+                                let path = this.featuresMap.get(currentFeatureName).path('M 0 0');
+                                if (this.mapOptions.nonScalingStroke)
+                                    path.root.setAttribute("vector-effect", 'non-scaling-stroke');
+                                let startX = json.features[c].geometry.coordinates[k][0][0];
+                                let startY = json.features[c].geometry.coordinates[k][0][1];
+                                path.d = `M ${startX} ${-1 * startY} `;
+                                for (i = 1; i < json.features[c].geometry.coordinates[k].length; i++) {
+                                    let x = json.features[c].geometry.coordinates[k][i][0];
+                                    let y = json.features[c].geometry.coordinates[k][i][1];
+                                    path.d += `L ${x} ${-1 * y} `;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (e) {
+                    throw new Error('There was an error processing the provided GeoJSON: ' + e);
+                }
+            }
+            /**
+            * The default behavior is to update its dependents on change.
+            */
+            onchange() {
+                this.updateDependents();
+            }
+        }
+
+        /**
+        * Returns the closest power of ten. TODO: replace this with an optimized
+        * function that remembers the last closest power of ten and first checks the
+        * adjacent powers of ten and then continues.
+        */
+        function expTrunc(x) {
+            // constants so don't have to count zeros
+            const N06 = 1000000;
+            const N05 = 100000;
+            const N04 = 10000;
+            const N03 = 1000;
+            const N02 = 100;
+            const N01 = 10;
+            const N00 = 1;
+            const N_1 = 0.1;
+            const N_2 = 0.01;
+            const N_3 = 0.001;
+            const N_4 = 0.0001;
+            const N_5 = 0.00001;
+            const N_6 = 0.000001;
+            if (x >= N06) {
+                return N06;
+            }
+            else if (x >= N05) {
+                return N05;
+            }
+            else if (x >= N04) {
+                return N04;
+            }
+            else if (x >= N03) {
+                return N03;
+            }
+            else if (x >= N02) {
+                return N02;
+            }
+            else if (x >= N01) {
+                return N01;
+            }
+            else if (x >= N00) {
+                return N00;
+            }
+            else if (x >= N_1) {
+                return N_1;
+            }
+            else if (x >= N_2) {
+                return N_2;
+            }
+            else if (x >= N_3) {
+                return N_3;
+            }
+            else if (x >= N_4) {
+                return N_4;
+            }
+            else if (x >= N_5) {
+                return N_5;
+            }
+            else if (x >= N_6) {
+                return N_6;
+            }
+        }
+        /**
+        * A plot of the graph of a function.
+        */
+        class Plot extends SVG {
+            /**
+            * Constructs a new graph capable of displaying a function in the form of
+            * x -> y. The user is able to drag, zoom-in, and zoom-out on the graph to
+            * explore the shape and form of the function.
+            */
+            constructor(fn, options) {
+                // default configuration options
+                let defaultOptions = {
+                    x: 0,
+                    y: 0,
+                    width: 700,
+                    height: 400,
+                    margin: 50,
+                    scaleX: 1,
+                    scaleY: 1,
+                    grid: true,
+                    labels: true,
+                    border: true,
+                    zoomable: false,
+                    displayPoint: false,
+                    controls: false // experimental
+                };
+                // combine the default configuration with the user's configuration
+                let config = { ...defaultOptions, ...options };
+                super(config.x, config.y, config.width, config.height);
+                // event variables
+                this.prevX = 0;
+                this.prevY = 0;
+                this.active = false;
+                this._function = fn;
+                // calculate the visible dimensions and top-left position of internal plot area coordinates
+                this._width = config.width - 2 * config.margin;
+                this._height = config.height - 2 * config.margin;
+                this._x = -this._width / 2;
+                this._y = -this._height / 2;
+                // creates a transparent rectangle to capture all user events
+                this.rect = this.rectangle(config.margin, config.margin, this._width, this._height);
+                this.rect.style.fill = 'transparent';
+                if (config.border) {
+                    this.rect.style.border = '1px solid #404040';
+                }
+                else {
+                    this.rect.style.stroke = 'none';
+                }
+                // create a clipping path rectangle to trim overflowing visual elements
+                let clipPath = this.clipPath();
+                clipPath.rectangle(0, 0, this._width, this._height);
+                this.clipGroup = this.group();
+                this.clipGroup.setAttribute('clip-path', `url(#${clipPath.id})`);
+                this.clipGroup.setAttribute('transform', `translate(${config.margin}, ${config.margin})`);
+                // default values
+                this.viewPort = this.clipGroup.svg(0, 0, this._width, this._height);
+                this.viewPort.setAttribute('preserveAspectRatio', 'none');
+                // create a static group for non-size-scaling objects
+                this.staticGroup = this.clipGroup.group();
+                this.xAxis = this.staticGroup.line(-10000, 0, 10000, 0);
+                this.yAxis = this.staticGroup.line(0, -10000, 0, 10000);
+                this.staticGroup.circle(0, 0, 3).fill = '#404040';
+                // initialize the scaling
+                this.scaleX = config.scaleX;
+                this.scaleY = config.scaleY;
+                // calculate the visible dimensions and top-left position of internal coordinates
+                this.visibleWidth = this._width / this.scaleX;
+                this.visibleHeight = this._height / this.scaleY;
+                this.internalX = -this.visibleWidth / 2;
+                this.internalY = -this.visibleHeight / 2;
+                this.fPath = this.staticGroup.path('');
+                // this.fPath.root.setAttribute('vector-effect','non-scaling-stroke');
+                this.fPath.setAttribute('transform', 'scale(1, -1)');
+                this.setViewBox();
+                if (config.originX != undefined && config.originY != undefined) {
+                    this.setOrigin(config.originX, config.originY);
+                }
+                // draw a grid of rectangles
+                if (config.grid) {
+                    this.grid = this.viewPort.group();
+                    this.grid.classList.add('grid');
+                    this.grid.style.opacity = '.4';
+                    this.drawGrid();
+                }
+                // store a temp variable for registering events
+                let graph = this;
+                // Registers event listeners
+                if (config.displayPoint === undefined || config.displayPoint) {
+                    // create a display circle for showing input and output
+                    this.displayCircle = this.staticGroup.circle(0, 0, 4);
+                    this.displayCircle.style.fill = 'cornflowerblue';
+                    this.displayCircle.setAttribute('transform', 'scale(1, -1)');
+                    this.xRect = this.rectangle(0, 0, 125, 40);
+                    this.yRect = this.rectangle(120, 0, 125, 40);
+                    this.xRect.root.style.fill = 'white';
+                    this.yRect.root.style.fill = 'white';
+                    this.xText = this.text(15, 20, 'x:0');
+                    this.xText.root.style.dominantBaseline = 'middle';
+                    this.xText.root.style.whiteSpace = 'pre';
+                    this.yText = this.text(125 + 15, 20, 'y:0');
+                    this.yText.root.style.dominantBaseline = 'middle';
+                    this.yText.root.style.whiteSpace = 'pre';
+                    this.root.addEventListener('mousemove', function (event) {
+                        graph.handleMouseMove(event);
+                    });
+                }
+                if (config.zoomable === undefined || config.zoomable) {
+                    this.root.addEventListener('mousedown', function (event) {
+                        graph.handleMouseDown(event);
+                    });
+                    this.root.addEventListener('mouseup', function (event) {
+                        graph.handleMouseUp(event);
+                    });
+                    this.root.addEventListener('mouseleave', function (event) {
+                        graph.handleMouseLeave(event);
+                    });
+                    this.root.addEventListener('mousewheel', function (event) {
+                        graph.handleMouseWheelEvent(event);
+                    }, { passive: false });
+                }
+                if (config.controls) {
+                    let zoomIn = this.rectangle(this._width - 48, 16, 30, 30);
+                    zoomIn.setAttribute('rx', '3');
+                    zoomIn.style.fill = '#f8f8f8';
+                    let zoomOut = this.rectangle(this._width - 48, 46, 30, 30);
+                    zoomOut.setAttribute('rx', '3');
+                    zoomOut.style.fill = '#f8f8f8';
+                    let fullscreen = this.circle(this._width - 32, this._height - 32, 16);
+                    fullscreen.style.fill = '#f8f8f8';
+                }
+                // draw the initial state of the graph
+                this.draw();
+                if (config.labels) {
+                    // draw the labels
+                    let group = this.group();
+                    group.style.fontFamily = 'KaTeX_Main';
+                    group.style.fontSize = '22px';
+                    // draw the title
+                    let title;
+                    if (config.title instanceof Text) {
+                        title = group.appendChild(config.title);
+                        title.x = this.width / 2;
+                        title.y = 25;
+                    }
+                    else {
+                        title = group.text(this.width / 2, 25, config.title);
+                    }
+                    title.setAttribute('alignment-baseline', 'middle');
+                    title.setAttribute('text-anchor', 'middle');
+                    let xPoints = this.getXLabelPoints();
+                    let yPoints = this.getYLabelPoints();
+                    for (let p of xPoints) {
+                        let point = this.internalToAbsolute(p);
+                        let text = group.text(point.x + config.margin, config.margin + this._height + config.margin / 2, `${p.x.toFixed(1)}`);
+                        text.setAttribute('alignment-baseline', 'middle');
+                        text.setAttribute('text-anchor', 'middle');
+                    }
+                    for (let p of yPoints) {
+                        let point = this.internalToAbsolute(p);
+                        let text = group.text(point.x + config.margin / 2, point.y + config.margin, `${p.y.toFixed(1)}`);
+                        text.setAttribute('alignment-baseline', 'middle');
+                        text.setAttribute('text-anchor', 'middle');
+                    }
+                }
+            }
+            /**
+            * Sets the internal function to the provided function
+            */
+            set function(f) {
+                this._function = f;
+            }
+            /**
+            * Returns the internal function
+            */
+            get function() {
+                return this._function;
+            }
+            get originX() {
+                return -this._x;
+            }
+            get originY() {
+                return -this._y;
+            }
+            /**
+            * Updates the display circle based on its current cx position, also updates
+            * the display text elements to represent the position of the display circle.
+            */
+            updateDisplayCircle() {
+                // Set the initial display position
+                if (this.displayCircle != undefined) {
+                    let cy = this.call(this.displayCircle.cx, false);
+                    if (isNaN(cy)) {
+                        this.displayCircle.cy = 0;
+                    }
+                    else if (isFinite(cy)) {
+                        this.displayCircle.cy = cy;
+                        this.xText.contents = this.format(this.displayCircle.cx / this.scaleX);
+                        this.yText.contents = this.format(this.displayCircle.cy / this.scaleY);
+                    }
+                    else {
+                        this.displayCircle.cy = this._height * 3;
+                        this.xText.contents = this.format(this.displayCircle.cx / this.scaleX);
+                        this.yText.contents = cy.toString();
+                    }
+                }
+            }
+            /**
+            * Returns the result of calling the internal function with the provided
+            * function scaling both the input and the output.
+            */
+            call(x, trim = false) {
+                // call and scale the function
+                let y = this.scaleY * this._function(x / this.scaleX);
+                // normalize big/small y values
+                if (trim) {
+                    let margin = 8;
+                    let yMax = this._y + this._height + margin;
+                    let yMin = this._y - margin;
+                    if (-y > yMax) {
+                        y = -yMax;
+                    }
+                    if (-y < yMin) {
+                        y = -yMin;
+                    }
+                }
+                else {
+                    let yMin = this._y - this._height;
+                    let yMax = this._y + 2 * this._height;
+                    if (-y > yMax) {
+                        y = -yMax;
+                    }
+                    if (-y < yMin) {
+                        y = -yMin;
+                    }
+                }
+                return y;
+            }
+            /**
+            * Formats the input number to be displayed within the graph.
+            */
+            format(n) {
+                if (n > 10000 || n < -10000 || (n < .01 && n > -.01)) {
+                    return n.toExponential(2);
+                }
+                else {
+                    return n.toPrecision(4);
+                }
+            }
+            /**
+            * Draws the internal function over the interval [startX, endX]. The default
+            * interval is [ minX - width, maxX + width ] so that when a user drags the
+            * graph there is enough drawn so that a translate may be applied instead of
+            * having to call draw again.
+            */
+            draw(startX = this._x - this._width, endX = this._x + 2 * this._width, trim = false) {
+                this.setViewBox();
+                this.updateDisplayCircle();
+                // Start drawing the function
+                let start = false;
+                let x = startX;
+                let y = this.call(x, false);
+                let d = '';
+                let prev;
+                // If y is valid input start drawing
+                if (!isNaN(y)) {
+                    d = `M ${x} ${y} `;
+                    prev = y;
+                    start = true;
+                }
+                // Loop through and draw coordiantes of the function path
+                for (x += 1; x < endX; x += 1) {
+                    let y = this.call(x, trim);
+                    if (isNaN(y) || !isFinite(y)) {
+                        continue;
+                    }
+                    // check for vertical asymptotes or if we haven't started drawing
+                    else if (Math.abs(prev - y) >= this._height || !start) {
+                        d += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
+                        start = true;
+                    }
+                    else {
+                        d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+                    }
+                    prev = y;
+                }
+                this.fPath.d = d;
+                // Update the dependents if there are any
+                this.updateDependents();
+            }
+            /**
+            *
+            */
+            drawGrid() {
+                // clear all the children
+                this.grid.clear();
+                // TODO: use a combination of these metrics below to calculate the spacing
+                // between two grid lines. I am guessing the goal is to space grid lines
+                // somewhere between 10 - 50 pixels in the actual coordinate system
+                let pixelsX = 100 * this.visibleWidth / this._width;
+                let pixelsY = 100 * this.visibleHeight / this._height;
+                let spacingX = expTrunc(pixelsX);
+                let spacingY = expTrunc(pixelsY);
+                // TODO: use the static group for this?
+                // let minX = this.internalX - this.visibleWidth;
+                // let maxX = this.internalX + 2*this.visibleWidth;
+                // let minY = this.internalY - this.visibleHeight;
+                // let maxY = this.internalY + 2*this.visibleHeight;
+                let minX = this.internalX;
+                let maxX = this.internalX + this.visibleWidth;
+                let minY = this.internalY;
+                let maxY = this.internalY + this.visibleHeight;
+                let x = spacingX * Math.floor(minX / spacingX);
+                while (x < maxX) {
+                    this.grid.line(x, minY, x, maxY);
+                    x += spacingX;
+                }
+                let y = spacingY * Math.floor(maxY / spacingY);
+                while (y > minY) {
+                    this.grid.line(minX, y, maxX, y);
+                    y -= spacingY;
+                }
+            }
+            internalToAbsolute(point) {
+                let x = point.x * this.scaleX + this.originX;
+                let y = point.y * this.scaleY - this.originY;
+                return { x: x, y: -y };
+            }
+            /**
+            *
+            */
+            getXLabelPoints() {
+                let labels = [];
+                let pixelsX = 250 * this.visibleWidth / this._width;
+                let spacingX = expTrunc(pixelsX);
+                // TODO: use the static group for this?
+                let minX = this.internalX;
+                let maxX = this.internalX + this.visibleWidth;
+                let minY = this.internalY;
+                let x = spacingX * Math.ceil(minX / spacingX);
+                while (x <= maxX) {
+                    labels.push({ x: x, y: minY });
+                    x += spacingX;
+                }
+                return labels;
+            }
+            /**
+            *
+            */
+            getYLabelPoints() {
+                let labels = [];
+                let pixelsY = 250 * this.visibleHeight / this._height;
+                let spacingY = expTrunc(pixelsY);
+                // TODO: use the static group for this?
+                let minX = this.internalX;
+                let minY = this.internalY;
+                let maxY = this.internalY + this.visibleHeight;
+                let y = spacingY * Math.floor(maxY / spacingY);
+                while (y >= minY) {
+                    labels.push({ x: minX, y: -y });
+                    y -= spacingY;
+                }
+                return labels;
+            }
+            /**
+            * When a user mouses down over this graph a drag is active.
+            */
+            handleMouseDown(event) {
+                this.active = true;
+                this.prevX = event.clientX;
+                this.prevY = event.clientY;
+            }
+            /**
+            * Deactivates the current drag event.
+            */
+            handleMouseUp(_event) {
+                this.active = false;
+            }
+            /**
+            * When the user's mouse leaves the graph deactivates any concurrent drag.
+            */
+            handleMouseLeave(event) {
+                this.handleMouseUp(event);
+            }
+            /**
+            * Updates the position of the static group and sets the viewbox on the
+            * viewPort element.
+            */
+            setViewBox() {
+                this.staticGroup.setAttribute('transform', `translate(${-this._x}, ${-this._y})`);
+                this.viewPort.setAttribute('viewBox', `${this.internalX} ${this.internalY} ${this.visibleWidth} ${this.visibleHeight}`);
+            }
+            /**
+            * This moves the origin of the plot to the location (x,y) relative to the size
+            * of the plot. For example, if the plot is 600 wide and 300 tall, placing the
+            * origin at (100,100) move the origin to the point 100 units in the x
+            * direction and 100 units in the y direction from the top left corner of the
+            * plot.
+            */
+            setOrigin(x, y) {
+                this._x = -x;
+                this._y = -y;
+                this.internalX = this._x / this.scaleX;
+                this.internalY = this._y / this.scaleY;
+                this.draw();
+            }
+            /**
+            * Handle when a mouse moves over this graph. If a drag event is active then
+            * translates the position of the graph to the new location.
+            */
+            handleMouseMove(event) {
+                if (this.active) {
+                    let deltaX = event.clientX - this.prevX;
+                    let deltaY = event.clientY - this.prevY;
+                    this._x -= deltaX;
+                    this._y -= deltaY;
+                    this.internalX -= deltaX / this.scaleX;
+                    this.internalY -= deltaY / this.scaleY;
+                    this.prevX = event.clientX;
+                    this.prevY = event.clientY;
+                    this.draw();
+                }
+                else {
+                    let br = this.rect.root.getBoundingClientRect();
+                    if (this.displayCircle != undefined) {
+                        this.displayCircle.cx = event.clientX - br.left + this._x;
+                        this.updateDisplayCircle();
+                    }
+                }
+            }
+            /**
+            * Zooms in and out on this graph. TODO: There is some jarring wheel action
+            * where an active wheel event on the page will stop dead when the mouse
+            * goes over the graph. Also it seems as if the scroll has pre-existing
+            * "momentum" that it can also affect the graph.
+            */
+            handleMouseWheelEvent(event) {
+                event.preventDefault();
+                let zoomIntensity = .02;
+                let br = this.rect.root.getBoundingClientRect();
+                let x = event.clientX - br.left;
+                let y = event.clientY - br.top;
+                let wheel = event.deltaY < 0 ? 1 : -1;
+                let zoom = Math.exp(wheel * zoomIntensity);
+                // transform the internal coordinate system
+                let deltaX = x / (this.scaleX * zoom) - x / this.scaleX;
+                let deltaY = y / (this.scaleY * zoom) - y / this.scaleY;
+                this.internalX -= deltaX;
+                this.internalY -= deltaY;
+                this.scaleX *= zoom;
+                this.scaleY *= zoom;
+                this.visibleWidth = this._width / this.scaleX;
+                this.visibleHeight = this._height / this.scaleY;
+                // update the elements in the static (svg) coordinate system
+                this._x = this.internalX * this.scaleX;
+                this._y = this.internalY * this.scaleY;
+                // update the position of the display circle
+                if (this.displayCircle != undefined) {
+                    this.displayCircle.cx = event.clientX - br.left + this._x;
+                }
+                // redraw visual elements
+                this.drawGrid();
+                this.draw();
+            }
+            /**
+            *
+            */
+            export() {
+                let result = new SVG(0, 0, this._width, this._height);
+                let margin = 8;
+                // trim axis
+                this.xAxis.x1 = this._x;
+                this.xAxis.x2 = this._x + this._width;
+                this.yAxis.y1 = this._y;
+                this.yAxis.y2 = this._y + this._height;
+                // draw trimmed version
+                this.draw(this._x - margin, this._x + this._width + margin, true);
+                return result;
+            }
+        }
+
+        // util
+        /**
+        * This class exposes the high level functionality of our library. Elements can
+        * created and related together
+        *
+        * By default input elements are added to a SVG "controls" group and visual
+        * elements are added to the "background" group. This ensures that controls will
+        * alwaysbe focusable, despite the order in which elements are created.
+        */
+        class Interactive extends SVG {
+            /**
+            * Constructs a new interactive object and appends it into the DOM. If the
+            * provided argument is an HTMLElement appends the interactive within that
+            * element. If the provided a value is a string, appends the interactive within
+            * the HTML element with the corresponding ID. If no element is found throws an
+            * error.
+            */
+            constructor(value, options = {}) {
+                super();
+                // If the user passes in a string identifier check to see if such an
+                // element exists in the current document.
+                if (typeof value == "string") {
+                    this.container = document.getElementById(value);
+                    if (this.container === null || this.container === undefined) {
+                        throw new Error(`There is no HTML element with the id: ${value}`);
+                    }
+                }
+                else {
+                    this.container = value;
+                }
+                // create and append the root svg element and group elements
+                this.container.appendChild(this.root);
+                this.root.classList.add('interactive');
+                // Have to create and manually append because overridden append child will
+                // throw an error.
+                this.background = new Group();
+                this.input = new Group();
+                this.root.appendChild(this.background.root);
+                this.root.appendChild(this.input.root);
+                // default configuration options
+                let defaultOptions = {
+                    originX: 0,
+                    originY: 0,
+                    width: 600,
+                    height: 300,
+                    border: false
+                };
+                // combine the default configuration with the user's configuration
+                let config = { ...defaultOptions, ...options };
+                this._originX = config.originX;
+                this._originY = config.originY;
+                this._width = config.width;
+                this._height = config.height;
+                this.root.setAttribute('width', this._width.toString());
+                this.root.setAttribute('height', this._height.toString());
+                this.setViewBox(-this._originX, -this._originY, this._width, this._height);
+                this.window = false;
+                this.border = config.border;
+                // prevent the default behavior of selecting text
+                this.container.addEventListener('mousedown', function (event) {
+                    event.preventDefault();
+                });
+            }
+            /**
+            * Sets the width of this interactive area.
+            */
+            set width(value) {
+                this._width = value;
+                this.root.setAttribute('width', value.toString());
+                this.setViewBox(-this._originX, -this._originY, this._width, this._height);
+            }
+            /**
+            * Returns the width of this interactive area.
+            */
+            get width() {
+                return this._width;
+            }
+            /**
+            * Sets the height of this interactive area.
+            */
+            set height(value) {
+                this._height = value;
+                this.root.setAttribute('height', value.toString());
+                this.setViewBox(-this._originX, -this._originY, this._width, this._height);
+            }
+            /**
+            * Returns the height of this interactive area.
+            */
+            get height() {
+                return this._height;
+            }
+            /**
+            * Sets the x coordinate of the origin.
+            */
+            set originX(value) {
+                this._originX = value;
+                this.setViewBox(-this._originX, -this._originY, this._width, this._height);
+            }
+            /**
+            * Returns the value of the x-coordinate of the origin.
+            */
+            get originX() {
+                return this._originX;
+            }
+            /**
+            * Sets the y coordinate of the origin.
+            */
+            set originY(value) {
+                this._originY = value;
+                this.setViewBox(-this._originX, -this._originY, this._width, this._height);
+            }
+            /**
+            * Returns the value of the x-coordinate of the origin.
+            */
+            get originY() {
+                return this._originY;
+            }
+            /**
+            * If set to true, styles the interactive to float on top of the background.
+            * This feature is good for interactives where elements can be dragged out of
+            * the bounds of the container element.
+            */
+            set window(value) {
+                if (value) {
+                    this.root.classList.add('window');
+                }
+                else {
+                    this.root.classList.remove('window');
+                }
+            }
+            /**
+            * If set to true, draws a minimal border around the interactive.
+            */
+            set border(value) {
+                if (value) {
+                    this.root.classList.add('border');
+                }
+                else {
+                    this.root.classList.remove('border');
+                }
+            }
+            /**
+            * Returns the minimum x-coordinate of this interactive.
+            */
+            get minX() {
+                return -this.originX;
+            }
+            /**
+            * Returns the minimum y-coordinate of this interactive.
+            */
+            get minY() {
+                return -this.originY;
+            }
+            /**
+            * Returns the maximum x-coordinate of this interactive.
+            */
+            get maxX() {
+                return this.minX + this._width;
+            }
+            /**
+            * Returns the maximum y-coordinate of this interactive.
+            */
+            get maxY() {
+                return this.minY + this._height;
+            }
+            /**
+            * Appends the element within the interactive. If the element is an "input"
+            * element, places the element in the input group so that visually the element
+            * is always placed above other graphical elements.
+            */
+            appendChild(child) {
+                if (child instanceof Input) {
+                    this.input.appendChild(child);
+                }
+                else {
+                    this.background.appendChild(child);
+                }
+                return child;
+            }
+            /**
+            * Creates a nested interactive within this interactive
+            */
+            interactive(x, y, options = {}) {
+                let obj = new Interactive(this.id, options);
+                // TODO: standardize this
+                obj.root.setAttribute('x', x.toString());
+                obj.root.setAttribute('y', y.toString());
+                return obj;
+            }
+            /**
+            * Creates a checkbox input at the position (x,y) within this interactive.
+            */
+            button(x, y, label) {
+                return this.appendChild(new Button(x, y, label));
+            }
+            /**
+            * Creates a checkbox input at the position (x,y) within this interactive.
+            */
+            checkBox(x, y, label, value) {
+                return this.appendChild(new CheckBox(x, y, label, value));
+            }
+            /**
+            * Creates an icon at the position (x,y) with the provided dimensions.
+            */
+            icon(x, y, width, height, name, options = {}) {
+                let baseURL;
+                if (options.baseURL === undefined) {
+                    baseURL = 'resources/icons/';
+                }
+                else {
+                    baseURL = options.baseURL;
+                }
+                // check to see if the symbols group has been initialized
+                if (this.symbols === undefined) {
+                    this.symbols = new Group();
+                    this.root.appendChild(this.symbols.root);
+                    this.icons = new Set();
+                }
+                // create a new icon element
+                let icon = new Icon(x, y, width, height);
+                this.appendChild(icon);
+                // check to see if we have loaded this icon before
+                let id = `${this.id}-${name}`;
+                if (!this.icons.has(id)) {
+                    // TODO: maybe we should only request one SVG file with that defines many
+                    // icon symbols. Then add the symbols as needed from, rather than have
+                    // many network requests for symbols. Or maybe the user could add the
+                    // symbols to their web page themselves.
+                    let temp = this;
+                    getURL(`${baseURL}${name}.svg`).then(function (response) {
+                        let symbolSVG = parseSVG(response);
+                        let symbol = temp.symbols.symbol();
+                        symbol.root.id = id;
+                        symbol.viewBox = symbolSVG.getAttribute('viewBox');
+                        while (symbolSVG.childNodes.length > 0) {
+                            symbol.root.appendChild(symbolSVG.childNodes[0]);
+                        }
+                        icon.href = `#${id}`;
+                    }).catch(function (error) {
+                        throw error;
+                    });
+                }
+                else {
+                    icon.href = `#${id}`;
+                }
+                this.icons.add(id);
+                return icon;
+            }
+            /**
+            * Creates a checkbox input at the position (x,y) within this interactive.
+            */
+            radioControl(x, y, labels, index = 0) {
+                return this.appendChild(new RadioControl(x, y, labels, index));
+            }
+            /**
+            * Creates a dropdown input at the position (x,y) within this interactive.
+            */
+            dropdownControl(x, y, optionLabels, defaultIndex) {
+                return this.appendChild(new DropdownControl(x, y, optionLabels, defaultIndex));
+            }
+            /**
+            * Creates a control point within this interactive at the position (x,y).
+            */
+            control(x, y) {
+                return this.appendChild(new Control(x, y));
+            }
+            /**
+            * Creates a control point within this interactive at the position (x,y).
+            */
+            controlCircle(x, y) {
+                return this.appendChild(new ControlCircle(x, y));
+            }
+            /**
+            * Creates a plot within this interactive at the position (x,y).
+            */
+            plot(fn, options) {
+                return this.appendChild(new Plot(fn, options));
+            }
+            /**
+            * Creates a graph element within this interactive
+            */
+            graph(options) {
+                return this.appendChild(new Graph(options));
+            }
+            hoverBox(str) {
+                return this.appendChild(new HoverBox(str));
+            }
+            /**
+            * Creates a graph element within this interactive
+            */
+            map(externalData, featureName = null, options = {}) {
+                let map = new GeoMap(featureName, externalData, options);
+                let ret = this.appendChild(map);
+                let bbox = map.root.getBBox();
+                map.setViewBox(bbox.x, bbox.y, bbox.width, bbox.height);
+                return ret;
+            }
+            /**
+            * Creates a slider input within this interactive
+            */
+            slider(x, y, options) {
+                return this.appendChild(new Slider(x, y, options));
+            }
+            /**
+            * Creates a scrubber with a play and pause button at the position (x,y).
+            */
+            scrubber(x, y, options) {
+                return this.appendChild(new Scrubber(x, y, options));
+            }
+            /**
+            * Creates a node within this interactive.
+            */
+            node(x, y, rx, ry, contents) {
+                return this.appendChild(new Node$1(x, y, rx, ry, contents));
+            }
+            /**
+            * Creates an edge connecting two nodes within this interactive.
+            */
+            edge(nodeFrom, nodeTo, directed) {
+                return this.appendChild(new Edge(nodeFrom, nodeTo, directed));
+            }
+            /**
+            *
+            */
+            async loadSVG(url) {
+                let group = new Group();
+                this.appendChild(group);
+                getURL(url).then(function (response) {
+                    group.root.appendChild(parseSVG(response));
+                }).catch(function (error) {
+                    throw error;
+                });
+                return group;
+            }
+        }
+
+        // let interactive = new Interactive("my-interactive");
+
+        let interactive;
+
+        // function main(){
+        function main() {
+            if (!interactive) {
+                interactive = new Interactive("vector");
+            }
+            // Create the constant TAU
+            const TAU = 2 * Math.PI;
+            // Initialize the interactive
+            let margin = 32;
+            // let interactive = new Interactive(id);
+            interactive.border = false;
+            interactive.originX = interactive.width / 2;
+            interactive.originY = interactive.width / 2;
+            interactive.height = interactive.width;
+            interactive.style.overflow = 'visible';
+            interactive.classList.add('default');
+            // Create three control points
+            let point = interactive.control(0, 0);
+            let radius = 50;
+            let n = 5;
+            let border = interactive.circle(0, 0, n * radius);
+            // Create a path
+            // let path = interactive.path('');
+            // path.addDependency(point);
+            // path.root.style.fill = 'rgb(236,236,236)';
+            // path.update = function () {
+            //     let flag = (point.y > 0) ? 1 : 0;
+            //     let angle = getAngle();
+            //     let r = 50;
+            //     path.d = `M 0 0
+            //           L ${r} 0
+            //           A ${r} ${r} 0 ${flag} 0 ${r * Math.cos(angle)} ${-r * Math.sin(angle)}
+            //           z`;
+            // };
+            // path.update();
+            let xAxis = interactive.line(-interactive.width / 2 + margin, 0, interactive.width / 2 - margin, 0);
+            let yAxis = interactive.line(0, -interactive.height / 2 + margin, 0, interactive.height / 2 - margin);
+            // let rectangle = interactive.rectangle(xAxis.x1, yAxis.y1, xAxis.x2 - xAxis.x1, yAxis.y2 - yAxis.y1);
+            point.constrainWithin(border);
+            let marker = interactive.marker(10, 5, 10, 10);
+            marker.path('M 0 0 L 10 5 L 0 10 z').style.fill = '#404040';
+            marker.setAttribute('orient', 'auto-start-reverse');
+            xAxis.setAttribute('marker-end', `url(#${marker.id})`);
+            xAxis.setAttribute('marker-start', `url(#${marker.id})`);
+            yAxis.setAttribute('marker-end', `url(#${marker.id})`);
+            yAxis.setAttribute('marker-start', `url(#${marker.id})`);
+            let right = interactive.text(xAxis.x2 + 16, xAxis.y2, '0, τ');
+            right.setAttribute('alignment-baseline', 'middle');
+            let top = interactive.text(yAxis.x1, yAxis.y1 - 16, 'τ/4');
+            top.setAttribute('text-anchor', 'middle');
+            let left = interactive.text(xAxis.x1 - 32, xAxis.y2, 'τ/2');
+            left.setAttribute('alignment-baseline', 'middle');
+            let bottom = interactive.text(yAxis.x1, yAxis.y2 + 32, '3/4τ');
+            bottom.setAttribute('text-anchor', 'middle');
+            let group = interactive.group();
+            group.style.strokeOpacity = '.2';
+            group.root.setAttribute('vector-effect', 'non-scaling-stroke');
+            let r = 50;
+            for (let i = 0; i <= n; i++) {
+                let circle = group.circle(0, 0, i * r);
+                if (i > 0 && i < n) {
+                    let tempAngle = 0 * Math.PI / n;
+                    group.text(circle.r * Math.cos(tempAngle) + 4, -circle.r * Math.sin(tempAngle) + 20, i.toString());
+                }
+            }
+            for (let angle = 0; angle <= TAU; angle += TAU / 8) {
+                let x = border.r * Math.cos(angle);
+                let y = border.r * Math.sin(angle);
+                group.line(-x, -y, x, y);
+            }
+            point.translate(2 * r * Math.cos(TAU / 8), -2 * r * Math.sin(TAU / 8));
+            let radiusLine = interactive.line(0, 0, 0, 0);
+            radiusLine.style.stroke = 'cornflowerblue';
+            radiusLine.style.strokeWidth = '5';
+            radiusLine.addDependency(point);
+            radiusLine.update = function () {
+                this.x2 = point.x;
+                this.y2 = point.y;
+            };
+            radiusLine.update();
+            interactive.circle(0, 0, 3).style.fill = '#404040';
+            let text = interactive.text(150, 150, "myText");
+            text.addDependency(point);
+            text.update = function () {
+                this.x = point.x + 15;
+                this.y = point.y - 15;
+                this.contents = `(${Math.hypot(point.y / 50, point.x / 50).toFixed(2)}, ${(getAngle() / (2 * Math.PI)).toFixed(3)}τ)`;
+            };
+            text.update();
+            // Gets the normalized angle between zero and tau. TODO: Maybe transform the
+            // coordinate system so that the positive y-direction is up instead of down.
+            // UPDATE: transform = 'scale(1,-1)' applied to the main svg  didn't quite work
+            // as expected: the text element was upside down, but maybe that could be
+            // reversed? bleh.
+            function getAngle() {
+                if (point.y <= 0) {
+                    return Math.abs(Math.atan2(point.y, point.x));
+                }
+                else {
+                    return Math.PI * 2 - Math.atan2(point.y, point.x);
+                }
+            }
+
+        }
+
+        // function addLine() {
+        function addLine() {
+            console.log(interactive);
+            if (!interactive) {
+                interactive = new Interactive("vector");
+                return;
+            }
+            let point1 = interactive.control(0, 0);
+
+            let radius = 50;
+            let n = 5;
+            let border = interactive.circle(0, 0, n * radius);
+            let r = 50;
+            const TAU = 2 * Math.PI;
+
+            point1.constrainWithin(border);
+
+            console.log(2 * r * Math.cos(TAU / 8));
+            console.log(-2 * r * Math.sin(TAU / 8));
+
+            point1.translate(2 * r * Math.cos(TAU / 8), -2 * r * Math.sin(TAU / 8)); // circle
+
+            // let radiusLine1 = interactive.line(100, 0, 0, 0);
+            let radiusLine1 = interactive.line(0, 0, 0, 0);
+            radiusLine1.style.stroke = 'cornflowerblue';
+            radiusLine1.style.strokeWidth = '5';
+            radiusLine1.addDependency(point1);
+            radiusLine1.update = function () {
+                this.x2 = point1.x;
+                this.y2 = point1.y;
+            };
+            radiusLine1.update();
+
+        }
+
+
+    </script>
+</body>
+
+</html>

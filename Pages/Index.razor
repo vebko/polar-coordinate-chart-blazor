@@ -1,0 +1,29 @@
+﻿@page "/"
+@inject IJSRuntime js
+
+<button class="btn btn-primary" @onclick="ShowVectorGraph">Show Vector Graph</button>
+<button class="btn btn-primary" @onclick="AddLineOnGraph">Add Line On Graph</button>
+
+<br/>
+<br/>
+<div id="vector"></div>
+<br/>
+
+<style>
+    #interactive-0 {
+        width: 100%;
+        height: auto;
+    }
+</style>
+@code {
+
+    private async void ShowVectorGraph()
+    {
+        await js.InvokeAsync<string>("main");
+    }
+
+    private void AddLineOnGraph()
+    {
+        js.InvokeVoidAsync("addLine");
+    }
+}
